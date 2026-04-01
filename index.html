@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ONE LDN — Cafe Sales Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%; height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #0f1117;
+      color: #e4e6ef;
+    }
+
+    body { padding: 0; overflow-x: hidden; }
+
+    .container {
+      width: 100%; max-width: 1400px;
+      margin: 0 auto; padding: 24px;
+    }
+
+    /* ── Header ── */
+    .header { margin-bottom: 28px; }
+    .header h1 { font-size: 30px; font-weight: 700; line-height: 1.2; margin-bottom: 4px; }
+    .header h1 .accent { color: #6c5ce7; }
+    .header .subtitle { font-size: 13px; color: #8b8fa3; }
+
+    /* ── Upload Banner ── */
+    .data-banner {
+      background: #1a1d27; border: 1px solid #2e3345; border-radius: 12px;
+      padding: 14px 16px; display: flex; align-items: center; gap: 12px;
+      margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .data-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #6c5ce7; flex-shrink: 0;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .data-label { font-size: 13px; color: #8b8fa3; font-weight: 500; white-space: nowrap; }
+    .upload-zone {
+      flex: 1; min-width: 240px; background: #232734;
+      border: 1px dashed #3a3f55; border-radius: 8px;
+      padding: 9px 14px; color: #8b8fa3; font-size: 13px;
+      cursor: pointer; transition: all .2s;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: #6c5ce7; background: #1e2030; color: #e4e6ef;
+    }
+    .upload-zone.has-data { border-style: solid; border-color: #00b894; color: #e4e6ef; }
+    .banner-btn {
+      background: #6c5ce7; color: #fff; border: none; border-radius: 8px;
+      padding: 9px 18px; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: background .2s; flex-shrink: 0;
+    }
+    .banner-btn:hover { background: #5a4cc4; }
+    .banner-btn.secondary {
+      background: transparent; border: 1px solid #3a3f55; color: #8b8fa3;
+    }
+    .banner-btn.secondary:hover { border-color: #6c5ce7; color: #e4e6ef; }
+    .banner-btn:disabled { background: #3a3f55; cursor: not-allowed; opacity: .6; }
+    .banner-status { font-size: 12px; color: #8b8fa3; min-width: 90px; }
+    .banner-status.ok { color: #00b894; }
+    .banner-status.err { color: #e17055; }
+    .banner-status.warn { color: #fdcb6e; }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; gap: 6px; background: #1a1d27;
+      border: 1px solid #2e3345; border-radius: 12px;
+      padding: 6px; margin-bottom: 28px; flex-wrap: wrap;
+    }
+    .tab {
+      flex: 1; text-align: center; padding: 8px 14px;
+      border-radius: 8px; background: transparent;
+      color: #8b8fa3; border: none; cursor: pointer;
+      font-size: 13px; font-weight: 500; transition: all .2s; white-space: nowrap;
+    }
+    .tab:hover { color: #e4e6ef; }
+    .tab.active { background: #6c5ce7; color: #fff; }
+
+    /* ── Sections ── */
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── KPI Row ── */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px; margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: #1a1d27; border: 1px solid #2e3345;
+      border-radius: 12px; padding: 16px 18px;
+      border-top: 3px solid transparent;
+    }
+    .kpi-card.purple { border-top-color: #6c5ce7; }
+    .kpi-card.green  { border-top-color: #00b894; }
+    .kpi-card.amber  { border-top-color: #fdcb6e; }
+    .kpi-card.red    { border-top-color: #e17055; }
+    .kpi-card.blue   { border-top-color: #74b9ff; }
+    .kpi-label {
+      font-size: 11px; color: #8b8fa3; font-weight: 500;
+      text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px;
+    }
+    .kpi-value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .kpi-sub  { font-size: 12px; color: #8b8fa3; margin-top: 6px; }
+    .kpi-delta { font-size: 12px; margin-top: 4px; }
+    .kpi-delta.up   { color: #00b894; }
+    .kpi-delta.down { color: #e17055; }
+    .kpi-delta.flat { color: #8b8fa3; }
+
+    /* ── Charts ── */
+    .chart-row {
+      display: grid; grid-template-columns: 1fr 320px;
+      gap: 16px; margin-bottom: 24px;
+    }
+    .chart-card {
+      background: #1a1d27; border: 1px solid #2e3345;
+      border-radius: 12px; padding: 20px;
+    }
+    .chart-title {
+      font-size: 13px; font-weight: 600; color: #8b8fa3;
+      text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px;
+    }
+    .chart-wrap { position: relative; }
+    .chart-wrap canvas { max-height: 240px; }
+    .donut-wrap { position: relative; max-width: 200px; margin: 0 auto; }
+    .donut-wrap canvas { max-height: 200px; }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 20px; flex-wrap: wrap;
+    }
+    .control-group { display: flex; align-items: center; gap: 8px; }
+    .control-label { font-size: 12px; color: #8b8fa3; white-space: nowrap; }
+    select {
+      background: #232734; border: 1px solid #3a3f55; border-radius: 8px;
+      color: #e4e6ef; padding: 7px 12px; font-size: 13px;
+      cursor: pointer; outline: none;
+    }
+    select:focus { border-color: #6c5ce7; }
+
+    /* ── Tables ── */
+    .table-card {
+      background: #1a1d27; border: 1px solid #2e3345;
+      border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+    }
+    .table-card .chart-title { padding: 16px 20px 0; margin-bottom: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left; padding: 10px 16px;
+      font-size: 11px; color: #8b8fa3; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .5px;
+      border-bottom: 1px solid #2e3345; white-space: nowrap;
+    }
+    th.right, td.right { text-align: right; }
+    td {
+      padding: 10px 16px; font-size: 13px;
+      border-bottom: 1px solid #1e2130;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2130; }
+    .rank { color: #8b8fa3; font-size: 12px; font-weight: 600; width: 30px; }
+
+    /* ── Category Badge ── */
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+
+    /* ── Velocity Bars ── */
+    .vel-bar-wrap { width: 100px; background: #232734; border-radius: 4px; height: 6px; }
+    .vel-bar { height: 6px; border-radius: 4px; }
+    .vel-hot  { background: #00b894; }
+    .vel-good { background: #6c5ce7; }
+    .vel-slow { background: #fdcb6e; }
+    .vel-dead { background: #e17055; }
+
+    .velocity-badge {
+      display: inline-block; padding: 2px 7px; border-radius: 20px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+    }
+    .vel-badge-hot  { background: rgba(0,184,148,.15); color: #00b894; }
+    .vel-badge-good { background: rgba(108,92,231,.15); color: #6c5ce7; }
+    .vel-badge-slow { background: rgba(253,203,110,.15); color: #fdcb6e; }
+    .vel-badge-dead { background: rgba(225,112,85,.15);  color: #e17055; }
+
+    /* ── Trends toggles ── */
+    .cat-toggles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .cat-toggle {
+      padding: 6px 12px; background: #232734;
+      border: 1px solid #2e3345; border-radius: 20px;
+      color: #8b8fa3; font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all .2s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .cat-toggle-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      opacity: .3; transition: opacity .2s;
+    }
+    .cat-toggle.active { border-color: transparent; }
+    .cat-toggle.active .cat-toggle-dot { opacity: 1; }
+
+    /* ── Empty State ── */
+    .empty-state {
+      text-align: center; padding: 60px 20px;
+      background: #1a1d27; border: 1px solid #2e3345;
+      border-radius: 12px; margin-bottom: 20px;
+    }
+    .empty-icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .empty-sub { font-size: 13px; color: #8b8fa3; max-width: 380px; margin: 0 auto; }
+
+    /* ── Unmatched Warning ── */
+    .warn-box {
+      background: rgba(253,203,110,.08); border: 1px solid rgba(253,203,110,.25);
+      border-radius: 10px; padding: 12px 16px; margin-bottom: 18px;
+      font-size: 12px; color: #fdcb6e;
+    }
+    .warn-box strong { display: block; margin-bottom: 4px; }
+
+    /* ── Legend ── */
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b8fa3; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .chart-row { grid-template-columns: 1fr; }
+      .kpi-row   { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .container { padding: 14px; }
+      .header h1 { font-size: 22px; }
+      .kpi-row   { grid-template-columns: 1fr 1fr; }
+      .tabs { flex-direction: column; }
+      .tab  { text-align: left; }
+      .data-banner { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>ONE LDN — Cafe <span class="accent">Sales</span></h1>
+    <div class="subtitle">Weekly tracking · top sellers · stock velocity · trends</div>
+  </div>
+
+  <!-- Upload Banner -->
+  <div class="data-banner">
+    <div class="data-dot" id="dataDot"></div>
+    <div class="data-label">Data source:</div>
+    <label class="upload-zone" id="uploadZone" for="csvInput">
+      <span id="uploadText">Drop WodBoard Shop Sales CSV(s) here or <u>click to browse</u></span>
+      <input type="file" id="csvInput" accept=".csv" multiple style="display:none">
+    </label>
+    <button class="banner-btn secondary" id="exportBtn" style="display:none">Export JSON</button>
+    <button class="banner-btn secondary" id="clearBtn" style="display:none">Clear</button>
+    <div class="banner-status" id="bannerStatus">No data loaded</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="summary">Weekly Summary</button>
+    <button class="tab" data-tab="sellers">Top Sellers</button>
+    <button class="tab" data-tab="velocity">Stock Velocity</button>
+    <button class="tab" data-tab="trends">Trends</button>
+  </div>
+
+  <!-- ── Tab: Weekly Summary ── -->
+  <div class="section active" data-tab="summary">
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Period:</label>
+        <select id="summaryPeriod">
+          <option value="4">Last 4 weeks</option>
+          <option value="8" selected>Last 8 weeks</option>
+          <option value="12">Last 12 weeks</option>
+          <option value="0">All time</option>
+        </select>
+      </div>
+    </div>
+    <div id="summaryWarn"></div>
+    <div class="kpi-row" id="summaryKPIs"></div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Weekly Revenue</div>
+        <div class="chart-wrap"><canvas id="revenueChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Revenue by Category</div>
+        <div class="donut-wrap"><canvas id="donutChart"></canvas></div>
+        <div class="legend" id="donutLegend"></div>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="chart-title">Top 10 Products — Selected Period</div>
+      <table id="summaryTopTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── Tab: Top Sellers ── -->
+  <div class="section" data-tab="sellers">
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Category:</label>
+        <select id="sellersCategory">
+          <option value="">All Categories</option>
+          <option>Coffee</option>
+          <option>Shakes</option>
+          <option>Bars &amp; Snacks</option>
+          <option>Functional Drinks</option>
+          <option>Merch</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label class="control-label">Period:</label>
+        <select id="sellersPeriod">
+          <option value="4">Last 4 weeks</option>
+          <option value="8" selected>Last 8 weeks</option>
+          <option value="12">Last 12 weeks</option>
+          <option value="0">All time</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label class="control-label">Sort by:</label>
+        <select id="sellersSort">
+          <option value="revenue">Revenue</option>
+          <option value="units">Units sold</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-card">
+      <table id="sellersTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Product</th>
+            <th>Category</th>
+            <th class="right">Units</th>
+            <th class="right">Revenue</th>
+            <th class="right">% of Total</th>
+          </tr>
+        </thead>
+        <tbody id="sellersTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Tab: Stock Velocity ── -->
+  <div class="section" data-tab="velocity">
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Category:</label>
+        <select id="velocityCategory">
+          <option value="">All (excl. Merch &amp; Services)</option>
+          <option>Coffee</option>
+          <option>Shakes</option>
+          <option>Bars &amp; Snacks</option>
+          <option>Functional Drinks</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label class="control-label">Period:</label>
+        <select id="velocityPeriod">
+          <option value="4">Last 4 weeks</option>
+          <option value="8" selected>Last 8 weeks</option>
+          <option value="12">Last 12 weeks</option>
+          <option value="0">All time</option>
+        </select>
+      </div>
+    </div>
+    <div id="velocityMeta" style="font-size:12px;color:#8b8fa3;margin-bottom:14px;"></div>
+    <div class="table-card">
+      <table id="velocityTable">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Category</th>
+            <th class="right">Total Units</th>
+            <th class="right">Avg / Week</th>
+            <th>Velocity</th>
+          </tr>
+        </thead>
+        <tbody id="velocityTbody"></tbody>
+      </table>
+    </div>
+    <div style="font-size:12px;color:#8b8fa3;padding:0 4px;">
+      Velocity bands — <span style="color:#00b894">●</span> Hot &gt;10/wk &nbsp;
+      <span style="color:#6c5ce7">●</span> Good 5–10/wk &nbsp;
+      <span style="color:#fdcb6e">●</span> Slow 2–5/wk &nbsp;
+      <span style="color:#e17055">●</span> Very Slow &lt;2/wk
+    </div>
+  </div>
+
+  <!-- ── Tab: Trends ── -->
+  <div class="section" data-tab="trends">
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Period:</label>
+        <select id="trendsPeriod">
+          <option value="8">Last 8 weeks</option>
+          <option value="12" selected>Last 12 weeks</option>
+          <option value="24">Last 24 weeks</option>
+          <option value="0">All time</option>
+        </select>
+      </div>
+    </div>
+    <div class="cat-toggles" id="trendToggles"></div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="chart-title">Weekly Revenue by Category</div>
+      <div class="chart-wrap"><canvas id="trendsChart" style="max-height:320px"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Weekly Units Sold by Category</div>
+      <div class="chart-wrap"><canvas id="trendsUnitsChart" style="max-height:260px"></canvas></div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIG — Category & Price Maps
+// ═══════════════════════════════════════════════════════════════════════════
+
+const CATEGORIES = ['Coffee','Shakes','Bars & Snacks','Functional Drinks','Merch','Other'];
+
+const CAT_COLORS = {
+  'Coffee':            '#e17055',
+  'Shakes':            '#6c5ce7',
+  'Bars & Snacks':     '#fdcb6e',
+  'Functional Drinks': '#00b894',
+  'Merch':             '#74b9ff',
+  'Other':             '#8b8fa3',
+};
+
+// Exact product → category
+const EXACT_CAT = {
+  'Espresso':'Coffee','Americano':'Coffee','Cortado':'Coffee','Flat White':'Coffee',
+  'Cappuccino - Small':'Coffee','Cappuccino - Large':'Coffee',
+  'Latte - Small':'Coffee','Latte - Large':'Coffee',
+  'Macchiato':'Coffee','Mocha - Small':'Coffee','Hot Chocolate - Large':'Coffee',
+  'Iced Americano':'Coffee','Dirty Chai - Small':'Coffee','Tea':'Coffee',
+  'Boost':'Shakes','Brunch':'Shakes','Cinnamon Swirl':'Shakes',
+  'Choco-Berry Cheesecake':'Shakes','PB&J':'Shakes','THE ONE PB':'Shakes',
+  'Power (Lean)':'Shakes','Staff Shake':'Shakes',
+  'Protein Powder - Whey':'Shakes','Protein Powder - Vegan':'Shakes',
+  'Shake Extras - Creatine':'Shakes','Shake Extras - Banana':'Shakes',
+  'Shake Extras - Berries':'Shakes','Shake Extras - Nut Butter':'Shakes',
+  'Shake Extras - Oats':'Shakes',
+  'ACTIPH Water':'Functional Drinks','Cano Water (330ml)':'Functional Drinks',
+  'C4 Energy':'Functional Drinks',
+  'Redbull - Originals - Original':'Functional Drinks',
+  'Redbull - Originals - Sugar Free':'Functional Drinks',
+  'Shower Towel':'Other','Fob':'Other',
+};
+
+// Prefix → category (checked when exact match fails)
+const PREFIX_CAT = [
+  ['Barebell Bars','Bars & Snacks'],['Misfit Bar','Bars & Snacks'],['UFit','Bars & Snacks'],
+  ['Nocco','Functional Drinks'],['Tenzing','Functional Drinks'],
+  ['Vitamin Well','Functional Drinks'],['Redbull','Functional Drinks'],
+  ['Barebell Shake','Functional Drinks'],['HIRO HYDRATION','Functional Drinks'],
+  ['ONE LDN','Merch'],['CREW SOCK','Merch'],['Shake Extras','Shakes'],
+];
+
+function getCategory(name) {
+  if (EXACT_CAT[name]) return EXACT_CAT[name];
+  for (const [p, c] of PREFIX_CAT) { if (name.startsWith(p)) return c; }
+  return 'Other';
+}
+
+// Exact product → price (£)
+const EXACT_PRICE = {
+  'Espresso':3.00,'Americano':4.10,'Cortado':3.35,'Flat White':3.90,
+  'Cappuccino - Small':3.80,'Cappuccino - Large':4.10,
+  'Latte - Small':3.80,'Latte - Large':4.10,
+  'Macchiato':2.80,'Mocha - Small':4.35,'Hot Chocolate - Large':4.35,
+  'Iced Americano':4.35,'Dirty Chai - Small':4.10,'Tea':2.30,
+  'Boost':6.00,'Brunch':6.80,'Cinnamon Swirl':6.80,
+  'Choco-Berry Cheesecake':6.00,'PB&J':6.50,'THE ONE PB':6.50,
+  'Power (Lean)':5.50,'Staff Shake':5.00,
+  'Protein Powder - Whey':1.00,'Protein Powder - Vegan':1.00,
+  'Shake Extras - Creatine':1.00,'Shake Extras - Banana':1.20,
+  'Shake Extras - Berries':1.20,'Shake Extras - Nut Butter':1.20,
+  'Shake Extras - Oats':1.20,
+  'ACTIPH Water':2.25,'Cano Water (330ml)':1.50,'C4 Energy':3.00,
+  'Redbull - Originals - Original':2.50,'Redbull - Originals - Sugar Free':2.50,
+  'Shower Towel':2.00,'Fob':10.00,
+  'CREW SOCK - uk5-uk10':15.00,
+};
+
+const PREFIX_PRICE = [
+  ['Barebell Bars',2.75],['Misfit Bar',2.75],['UFit',3.00],
+  ['Nocco',3.00],['Tenzing',2.25],['Vitamin Well',2.75],
+  ['Redbull - Editions',3.00],['Redbull',2.50],
+  ['Barebell Shake',2.80],['HIRO HYDRATION',3.50],
+  ['ONE LDN Athlete Hoodie',50.00],['ONE LDN Washed Tank',25.00],
+  ['ONE LDN Training Dept. Tee',35.00],['ONE LDN Unbeatable',35.00],
+  ['ONE LDN',35.00],
+];
+
+function getPrice(name) {
+  if (EXACT_PRICE[name] !== undefined) return EXACT_PRICE[name];
+  for (const [p, v] of PREFIX_PRICE) { if (name.startsWith(p)) return v; }
+  return null;
+}
+
+// Products excluded from Stock Velocity tab
+const VELOCITY_EXCLUDE_CATS = new Set(['Merch','Other']);
+const VELOCITY_EXCLUDE_PRODUCTS = new Set(['Staff Shake']);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATA MODEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STORAGE_KEY   = 'oneLdn_cafeSales_v1';
+const STORAGE_TS    = 'oneLdn_cafeSales_ts_v1';
+
+let allRecords = [];   // flat array of processed line items
+let activeCharts = {}; // chart instances keyed by id
+let unmatchedProducts = new Set();
+let activeTrendCategories = new Set(CATEGORIES);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATE / WEEK HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function parseDDMMYYYY(str) {
+  // "20/03/2026 07:04" or "20/03/2026"
+  const [datePart] = (str || '').trim().split(' ');
+  const parts = datePart.split('/');
+  if (parts.length !== 3) return null;
+  const [d, m, y] = parts.map(Number);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return null;
+  return new Date(y, m - 1, d);
+}
+
+function getMondayOf(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = (day === 0) ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function fmtWeek(isoStr) {
+  // "2026-03-17" → "17 Mar"
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function fmtCurrency(n) {
+  return '£' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function nWeeksAgoMonday(n) {
+  // Returns ISO date string for start of (n weeks ago) Monday
+  const now = new Date();
+  const thisMonday = getMondayOf(now);
+  const d = new Date(thisMonday);
+  d.setDate(d.getDate() - (n * 7));
+  return isoDate(d);
+}
+
+function getWeekKeys(records, nWeeks) {
+  // Returns sorted unique weekStart keys, optionally filtered to last nWeeks
+  const all = [...new Set(records.map(r => r.weekStart))].sort();
+  if (!nWeeks) return all;
+  return all.slice(-nWeeks);
+}
+
+function filterByPeriod(records, nWeeks) {
+  if (!nWeeks) return records;
+  const weeks = getWeekKeys(records, nWeeks);
+  const cutoff = weeks[0];
+  return records.filter(r => r.weekStart >= cutoff);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSV PARSING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function splitItems(itemsStr) {
+  // "Product A x 1, Product B x 2" — split on ', ' before capital letter
+  const parts = itemsStr.split(/,\s*(?=[A-Z0-9])/);
+  return parts.map(part => {
+    const m = part.trim().match(/^(.+?)\s+x\s+(\d+)\s*$/);
+    if (m) return { name: m[1].trim(), qty: parseInt(m[2]) };
+    const name = part.trim();
+    return name ? { name, qty: 1 } : null;
+  }).filter(Boolean);
+}
+
+function processRows(rows) {
+  const records = [];
+  const unmatched = new Set();
+
+  for (const row of rows) {
+    const dateStr   = (row['Date'] || '').trim();
+    const itemsStr  = (row['Items'] || '').trim();
+    const orderNo   = (row['Order No.'] || '').trim();
+
+    if (!dateStr || !itemsStr) continue;
+    const date = parseDDMMYYYY(dateStr);
+    if (!date) continue;
+
+    const weekStart = isoDate(getMondayOf(date));
+    const items = splitItems(itemsStr);
+
+    for (const { name, qty } of items) {
+      const category = getCategory(name);
+      const price    = getPrice(name);
+      if (price === null) unmatched.add(name);
+      records.push({
+        date:      isoDate(date),
+        weekStart,
+        product:   name,
+        category,
+        qty,
+        revenue:   price !== null ? +(price * qty).toFixed(2) : 0,
+        priceKnown: price !== null,
+        orderNo,
+      });
+    }
+  }
+  return { records, unmatched };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STORAGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+function saveToStorage(records) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    localStorage.setItem(STORAGE_TS, new Date().toISOString());
+  } catch(e) { console.warn('localStorage write failed', e); }
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length ? parsed : null;
+  } catch(e) { return null; }
+}
+
+function clearStorage() {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(STORAGE_TS);
+}
+
+function storedDate() {
+  try {
+    const t = localStorage.getItem(STORAGE_TS);
+    return t ? new Date(t) : null;
+  } catch(e) { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE UPLOAD
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function parseFile(file) {
+  return new Promise((res, rej) => {
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: res, error: rej,
+    });
+  });
+}
+
+async function handleFiles(files) {
+  if (!files || !files.length) return;
+  const fileArr = Array.from(files);
+  setStatus('', '');
+  document.getElementById('uploadText').textContent = 'Processing…';
+
+  let newRecords = [];
+  const errors = [];
+
+  for (let i = 0; i < fileArr.length; i++) {
+    const file = fileArr[i];
+    if (fileArr.length > 1) {
+      document.getElementById('uploadText').textContent =
+        `Processing ${i + 1} of ${fileArr.length}: ${file.name}…`;
+    }
+    try {
+      const result = await parseFile(file);
+      const { records, unmatched } = processRows(result.data);
+      newRecords = newRecords.concat(records);
+      unmatched.forEach(p => unmatchedProducts.add(p));
+    } catch(e) { errors.push(file.name + ': ' + e.message); }
+  }
+
+  if (!newRecords.length) {
+    document.getElementById('uploadText').innerHTML =
+      'Drop WodBoard Shop Sales CSV(s) here or <u>click to browse</u>';
+    setStatus('err', errors.length ? errors[0] : 'No valid data found');
+    return;
+  }
+
+  // Merge + deduplicate on orderNo + product + qty + date
+  const existing = allRecords;
+  const combined = [...existing, ...newRecords];
+  const seen = new Set();
+  allRecords = combined.filter(r => {
+    const key = r.orderNo + '|' + r.product + '|' + r.date;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+
+  saveToStorage(allRecords);
+
+  const zone = document.getElementById('uploadZone');
+  zone.classList.add('has-data');
+  document.getElementById('uploadText').textContent =
+    `✓ ${allRecords.length.toLocaleString()} line items from ${[...new Set(allRecords.map(r=>r.weekStart))].length} weeks`;
+  document.getElementById('clearBtn').style.display = '';
+  document.getElementById('exportBtn').style.display = '';
+
+  const msg = allRecords.length.toLocaleString() + ' records';
+  setStatus('ok', errors.length ? `${errors.length} file(s) failed` : msg);
+
+  renderAll();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function setStatus(type, msg) {
+  const el = document.getElementById('bannerStatus');
+  el.className = 'banner-status' + (type ? ' ' + type : '');
+  el.textContent = msg;
+}
+
+function catBadge(cat) {
+  const col = CAT_COLORS[cat] || '#8b8fa3';
+  return `<span class="badge" style="background:${col}22;color:${col}">${cat}</span>`;
+}
+
+function destroyChart(id) {
+  if (activeCharts[id]) { activeCharts[id].destroy(); delete activeCharts[id]; }
+}
+
+function emptyState(container, msg = 'Upload a WodBoard Shop Sales CSV to get started') {
+  container.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">📊</div>
+      <div class="empty-title">No data yet</div>
+      <div class="empty-sub">${msg}</div>
+    </div>`;
+}
+
+function showUnmatchedWarn(containerId) {
+  const el = document.getElementById(containerId);
+  if (!unmatchedProducts.size) { el.innerHTML = ''; return; }
+  const list = [...unmatchedProducts].slice(0, 8).join(', ');
+  const more = unmatchedProducts.size > 8 ? ` +${unmatchedProducts.size - 8} more` : '';
+  el.innerHTML = `<div class="warn-box">
+    <strong>⚠ Unrecognised products (revenue shown as £0)</strong>
+    ${list}${more} — update the price map in the source file to fix.
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER — WEEKLY SUMMARY
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderSummary() {
+  const nWeeks = parseInt(document.getElementById('summaryPeriod').value) || 0;
+  const records = filterByPeriod(allRecords, nWeeks);
+  showUnmatchedWarn('summaryWarn');
+
+  if (!records.length) {
+    emptyState(document.getElementById('summaryKPIs').closest('.section'));
+    return;
+  }
+
+  const weeks = getWeekKeys(records, 0);
+  const latestWk = weeks[weeks.length - 1];
+  const prevWk   = weeks.length > 1 ? weeks[weeks.length - 2] : null;
+
+  const wkRecords  = records.filter(r => r.weekStart === latestWk);
+  const prevRecords = prevWk ? records.filter(r => r.weekStart === prevWk) : [];
+
+  const totalRev  = records.reduce((s,r) => s + r.revenue, 0);
+  const wkRev     = wkRecords.reduce((s,r) => s + r.revenue, 0);
+  const prevRev   = prevRecords.reduce((s,r) => s + r.revenue, 0);
+  const totalUnits = records.reduce((s,r) => s + r.qty, 0);
+  const wkUnits    = wkRecords.reduce((s,r) => s + r.qty, 0);
+
+  // Top category
+  const catRev = {};
+  CATEGORIES.forEach(c => catRev[c] = 0);
+  records.forEach(r => { catRev[r.category] = (catRev[r.category] || 0) + r.revenue; });
+  const topCat = Object.entries(catRev).sort((a,b) => b[1]-a[1])[0];
+
+  // WoW delta
+  const delta = prevRev ? ((wkRev - prevRev) / prevRev * 100) : null;
+  const deltaClass = delta === null ? 'flat' : delta >= 0 ? 'up' : 'down';
+  const deltaStr = delta === null ? '—' : (delta >= 0 ? '▲' : '▼') + ' ' + Math.abs(delta).toFixed(1) + '%';
+
+  // KPIs
+  document.getElementById('summaryKPIs').innerHTML = `
+    <div class="kpi-card purple">
+      <div class="kpi-label">Total Revenue (period)</div>
+      <div class="kpi-value">${fmtCurrency(totalRev)}</div>
+      <div class="kpi-sub">${weeks.length} weeks</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Latest Week Revenue</div>
+      <div class="kpi-value">${fmtCurrency(wkRev)}</div>
+      <div class="kpi-delta ${deltaClass}">WoW: ${deltaStr}</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-label">Units Sold (period)</div>
+      <div class="kpi-value">${totalUnits.toLocaleString()}</div>
+      <div class="kpi-sub">${wkUnits} this week</div>
+    </div>
+    <div class="kpi-card" style="border-top-color:${CAT_COLORS[topCat[0]] || '#6c5ce7'}">
+      <div class="kpi-label">Top Category</div>
+      <div class="kpi-value" style="font-size:18px">${topCat[0]}</div>
+      <div class="kpi-sub">${fmtCurrency(topCat[1])} revenue</div>
+    </div>
+  `;
+
+  // Weekly revenue bar chart
+  destroyChart('revenueChart');
+  const wkKeys = getWeekKeys(records, 0);
+  const wkRevs = wkKeys.map(wk => {
+    return records.filter(r => r.weekStart === wk).reduce((s,r) => s + r.revenue, 0);
+  });
+  const ctx1 = document.getElementById('revenueChart').getContext('2d');
+  activeCharts['revenueChart'] = new Chart(ctx1, {
+    type: 'bar',
+    data: {
+      labels: wkKeys.map(fmtWeek),
+      datasets: [{
+        label: 'Revenue',
+        data: wkRevs,
+        backgroundColor: wkKeys.map((wk, i) =>
+          wk === latestWk ? '#6c5ce7' : 'rgba(108,92,231,0.35)'
+        ),
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ' ' + fmtCurrency(ctx.parsed.y) } }
+      },
+      scales: {
+        x: { grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 } } },
+        y: { grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 },
+          callback: v => '£' + v } }
+      }
+    }
+  });
+
+  // Donut chart
+  destroyChart('donutChart');
+  const catRevArr = CATEGORIES.map(c => catRev[c] || 0);
+  const ctx2 = document.getElementById('donutChart').getContext('2d');
+  activeCharts['donutChart'] = new Chart(ctx2, {
+    type: 'doughnut',
+    data: {
+      labels: CATEGORIES,
+      datasets: [{
+        data: catRevArr,
+        backgroundColor: CATEGORIES.map(c => CAT_COLORS[c]),
+        borderColor: '#1a1d27', borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true, cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: ctx => ' ' + ctx.label + ': ' + fmtCurrency(ctx.parsed)
+        }}
+      }
+    }
+  });
+
+  document.getElementById('donutLegend').innerHTML = CATEGORIES
+    .filter(c => (catRev[c] || 0) > 0)
+    .sort((a,b) => catRev[b] - catRev[a])
+    .map(c => `<div class="legend-item">
+      <div class="legend-dot" style="background:${CAT_COLORS[c]}"></div>
+      ${c} — ${fmtCurrency(catRev[c] || 0)}
+    </div>`).join('');
+
+  // Top 10 table
+  const prodAgg = {};
+  records.forEach(r => {
+    if (!prodAgg[r.product]) prodAgg[r.product] = { category: r.category, units: 0, revenue: 0 };
+    prodAgg[r.product].units   += r.qty;
+    prodAgg[r.product].revenue += r.revenue;
+  });
+  const sorted = Object.entries(prodAgg).sort((a,b) => b[1].revenue - a[1].revenue).slice(0, 10);
+  const maxRev = sorted[0]?.[1].revenue || 1;
+
+  document.querySelector('#summaryTopTable tbody').innerHTML = sorted.map(([prod, d], i) => `
+    <tr>
+      <td class="rank">${i+1}</td>
+      <td>${prod}</td>
+      <td>${catBadge(d.category)}</td>
+      <td class="right">${d.units}</td>
+      <td class="right">${fmtCurrency(d.revenue)}</td>
+      <td class="right" style="min-width:120px">
+        <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+          <div class="vel-bar-wrap" style="width:80px">
+            <div class="vel-bar" style="background:${CAT_COLORS[d.category]};width:${(d.revenue/maxRev*100).toFixed(1)}%"></div>
+          </div>
+          ${(d.revenue/totalRev*100).toFixed(1)}%
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER — TOP SELLERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderSellers() {
+  const nWeeks  = parseInt(document.getElementById('sellersPeriod').value) || 0;
+  const catFilter = document.getElementById('sellersCategory').value;
+  const sortBy  = document.getElementById('sellersSort').value;
+
+  let records = filterByPeriod(allRecords, nWeeks);
+  if (catFilter) records = records.filter(r => r.category === catFilter);
+
+  const prodAgg = {};
+  records.forEach(r => {
+    if (!prodAgg[r.product]) prodAgg[r.product] = { category: r.category, units: 0, revenue: 0 };
+    prodAgg[r.product].units   += r.qty;
+    prodAgg[r.product].revenue += r.revenue;
+  });
+
+  const totalRev   = Object.values(prodAgg).reduce((s,d) => s + d.revenue, 0);
+  const totalUnits = Object.values(prodAgg).reduce((s,d) => s + d.units, 0);
+
+  const sorted = Object.entries(prodAgg)
+    .sort((a,b) => sortBy === 'units' ? b[1].units - a[1].units : b[1].revenue - a[1].revenue);
+
+  if (!sorted.length) {
+    document.getElementById('sellersTbody').innerHTML =
+      `<tr><td colspan="6" style="text-align:center;padding:30px;color:#8b8fa3">No data for this selection</td></tr>`;
+    return;
+  }
+
+  document.getElementById('sellersTbody').innerHTML = sorted.map(([prod, d], i) => `
+    <tr>
+      <td class="rank">${i+1}</td>
+      <td>${prod}</td>
+      <td>${catBadge(d.category)}</td>
+      <td class="right">${d.units.toLocaleString()}</td>
+      <td class="right">${fmtCurrency(d.revenue)}</td>
+      <td class="right">${sortBy==='units'
+        ? (d.units/totalUnits*100).toFixed(1)+'%'
+        : (d.revenue/totalRev*100).toFixed(1)+'%'}</td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER — STOCK VELOCITY
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderVelocity() {
+  const nWeeks    = parseInt(document.getElementById('velocityPeriod').value) || 0;
+  const catFilter = document.getElementById('velocityCategory').value;
+
+  let records = filterByPeriod(allRecords, nWeeks);
+
+  // Exclude Merch, Other, Staff Shake
+  records = records.filter(r =>
+    !VELOCITY_EXCLUDE_CATS.has(r.category) &&
+    !VELOCITY_EXCLUDE_PRODUCTS.has(r.product)
+  );
+  if (catFilter) records = records.filter(r => r.category === catFilter);
+
+  const weeks = [...new Set(records.map(r => r.weekStart))];
+  const nWks  = weeks.length || 1;
+
+  document.getElementById('velocityMeta').textContent =
+    `Showing data over ${nWks} week${nWks !== 1 ? 's' : ''}. Excludes Merch, Services, and Staff Shake.`;
+
+  const prodAgg = {};
+  records.forEach(r => {
+    if (!prodAgg[r.product]) prodAgg[r.product] = { category: r.category, units: 0 };
+    prodAgg[r.product].units += r.qty;
+  });
+
+  const sorted = Object.entries(prodAgg)
+    .map(([prod, d]) => ({ prod, category: d.category, total: d.units, avg: d.units / nWks }))
+    .sort((a, b) => b.avg - a.avg);
+
+  if (!sorted.length) {
+    document.getElementById('velocityTbody').innerHTML =
+      `<tr><td colspan="5" style="text-align:center;padding:30px;color:#8b8fa3">No data for this selection</td></tr>`;
+    return;
+  }
+
+  const maxAvg = sorted[0].avg || 1;
+
+  function velBand(avg) {
+    if (avg > 10) return ['hot', 'Hot'];
+    if (avg > 5)  return ['good', 'Good'];
+    if (avg > 2)  return ['slow', 'Slow'];
+    return ['dead', 'Very Slow'];
+  }
+
+  document.getElementById('velocityTbody').innerHTML = sorted.map(({ prod, category, total, avg }) => {
+    const [band, label] = velBand(avg);
+    return `<tr>
+      <td>${prod}</td>
+      <td>${catBadge(category)}</td>
+      <td class="right">${total}</td>
+      <td class="right">${avg.toFixed(1)}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="vel-bar-wrap" style="width:80px">
+            <div class="vel-bar vel-${band}" style="width:${(avg/maxAvg*100).toFixed(1)}%"></div>
+          </div>
+          <span class="velocity-badge vel-badge-${band}">${label}</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER — TRENDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildTrendToggles() {
+  const container = document.getElementById('trendToggles');
+  container.innerHTML = CATEGORIES.map(cat => `
+    <div class="cat-toggle active" data-cat="${cat}" style="color:${CAT_COLORS[cat]};border-color:${CAT_COLORS[cat]}22">
+      <div class="cat-toggle-dot" style="background:${CAT_COLORS[cat]}"></div>
+      ${cat}
+    </div>`).join('');
+
+  container.querySelectorAll('.cat-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.cat;
+      if (activeTrendCategories.has(cat)) {
+        activeTrendCategories.delete(cat);
+        btn.classList.remove('active');
+        btn.style.color = '#8b8fa3';
+        btn.style.borderColor = '#2e3345';
+      } else {
+        activeTrendCategories.add(cat);
+        btn.classList.add('active');
+        btn.style.color = CAT_COLORS[cat];
+        btn.style.borderColor = CAT_COLORS[cat] + '22';
+      }
+      renderTrends();
+    });
+  });
+}
+
+function renderTrends() {
+  const nWeeks  = parseInt(document.getElementById('trendsPeriod').value) || 0;
+  const records = filterByPeriod(allRecords, nWeeks);
+  const weeks   = getWeekKeys(records, 0);
+
+  if (!weeks.length) return;
+
+  const activeCats = CATEGORIES.filter(c => activeTrendCategories.has(c));
+
+  // Revenue by category by week
+  destroyChart('trendsChart');
+  const ctx1 = document.getElementById('trendsChart').getContext('2d');
+  activeCharts['trendsChart'] = new Chart(ctx1, {
+    type: 'line',
+    data: {
+      labels: weeks.map(fmtWeek),
+      datasets: activeCats.map(cat => ({
+        label: cat,
+        data: weeks.map(wk =>
+          records.filter(r => r.weekStart === wk && r.category === cat)
+                 .reduce((s,r) => s + r.revenue, 0)
+        ),
+        borderColor: CAT_COLORS[cat],
+        backgroundColor: CAT_COLORS[cat] + '18',
+        tension: 0.3,
+        fill: false,
+        pointRadius: 3,
+        borderWidth: 2,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: ctx => ' ' + ctx.dataset.label + ': ' + fmtCurrency(ctx.parsed.y)
+        }}
+      },
+      scales: {
+        x: { grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 } } },
+        y: { grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 },
+          callback: v => '£' + v } }
+      }
+    }
+  });
+
+  // Units by category by week
+  destroyChart('trendsUnitsChart');
+  const ctx2 = document.getElementById('trendsUnitsChart').getContext('2d');
+  activeCharts['trendsUnitsChart'] = new Chart(ctx2, {
+    type: 'bar',
+    data: {
+      labels: weeks.map(fmtWeek),
+      datasets: activeCats.map(cat => ({
+        label: cat,
+        data: weeks.map(wk =>
+          records.filter(r => r.weekStart === wk && r.category === cat)
+                 .reduce((s,r) => s + r.qty, 0)
+        ),
+        backgroundColor: CAT_COLORS[cat] + 'bb',
+        stack: 'units',
+        borderRadius: 2,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y + ' units'
+        }}
+      },
+      scales: {
+        x: { stacked: true, grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 } } },
+        y: { stacked: true, grid: { color: '#2e3345' }, ticks: { color: '#8b8fa3', font: { size: 11 } } }
+      }
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER DISPATCH
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderAll() {
+  renderSummary();
+  renderSellers();
+  renderVelocity();
+  renderTrends();
+}
+
+function renderCurrentTab() {
+  const active = document.querySelector('.tab.active')?.dataset.tab;
+  if (active === 'summary')  renderSummary();
+  if (active === 'sellers')  renderSellers();
+  if (active === 'velocity') renderVelocity();
+  if (active === 'trends')   renderTrends();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(allRecords, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'cafe-sales-data.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function init() {
+  // Try to load from data.json (GitHub Pages shared data)
+  fetch('./cafe-sales-data.json')
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => {
+      if (Array.isArray(data) && data.length) {
+        allRecords = data;
+        const zone = document.getElementById('uploadZone');
+        zone.classList.add('has-data');
+        document.getElementById('uploadText').textContent =
+          `✓ ${allRecords.length.toLocaleString()} records (shared data)`;
+        document.getElementById('clearBtn').style.display = '';
+        document.getElementById('exportBtn').style.display = '';
+        setStatus('ok', allRecords.length.toLocaleString() + ' records');
+        renderAll();
+      }
+    })
+    .catch(() => {
+      // Fall back to localStorage
+      const stored = loadFromStorage();
+      if (stored) {
+        allRecords = stored;
+        const savedDate = storedDate();
+        const dateStr = savedDate
+          ? savedDate.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })
+          : '';
+        const zone = document.getElementById('uploadZone');
+        zone.classList.add('has-data');
+        document.getElementById('uploadText').textContent =
+          `✓ ${allRecords.length.toLocaleString()} records · saved ${dateStr}`;
+        document.getElementById('clearBtn').style.display = '';
+        document.getElementById('exportBtn').style.display = '';
+        setStatus('ok', allRecords.length.toLocaleString() + ' records');
+        renderAll();
+      }
+    });
+
+  // Build trend toggles
+  buildTrendToggles();
+
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      tab.classList.add('active');
+      const section = document.querySelector(`.section[data-tab="${tab.dataset.tab}"]`);
+      if (section) section.classList.add('active');
+      renderCurrentTab();
+    });
+  });
+
+  // File input
+  const csvInput = document.getElementById('csvInput');
+  csvInput.addEventListener('change', e => {
+    handleFiles(e.target.files);
+    csvInput.value = '';
+  });
+
+  // Drag & drop
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    handleFiles(e.dataTransfer.files);
+  });
+
+  // Clear
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    allRecords = []; unmatchedProducts.clear();
+    clearStorage();
+    const zone = document.getElementById('uploadZone');
+    zone.classList.remove('has-data');
+    document.getElementById('uploadText').innerHTML =
+      'Drop WodBoard Shop Sales CSV(s) here or <u>click to browse</u>';
+    document.getElementById('clearBtn').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    setStatus('', 'No data loaded');
+    Object.values(activeCharts).forEach(c => c.destroy());
+    activeCharts = {};
+    document.getElementById('summaryKPIs').innerHTML = '';
+    document.querySelector('#summaryTopTable tbody').innerHTML = '';
+    document.getElementById('sellersTbody').innerHTML = '';
+    document.getElementById('velocityTbody').innerHTML = '';
+    document.getElementById('summaryWarn').innerHTML = '';
+  });
+
+  // Export
+  document.getElementById('exportBtn').addEventListener('click', exportJSON);
+
+  // Controls — re-render on change
+  ['summaryPeriod'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', renderSummary);
+  });
+  ['sellersCategory','sellersPeriod','sellersSort'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', renderSellers);
+  });
+  ['velocityCategory','velocityPeriod'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', renderVelocity);
+  });
+  document.getElementById('trendsPeriod')?.addEventListener('change', renderTrends);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
