@@ -335,6 +335,53 @@
     .form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color: #6c5ce7; }
     .form-status { font-size: 12px; margin-top: 8px; }
 
+    /* ── Order Prediction tab ── */
+    .pred-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+    .pred-controls select {
+      background: #1a1d27; border: 1px solid #2e3345; border-radius: 8px;
+      color: #e4e6ef; padding: 6px 12px; font-size: 12px; cursor: pointer; outline: none;
+    }
+    .pred-controls select:focus { border-color: #6c5ce7; }
+    .pred-reload-btn {
+      background: transparent; border: 1px solid #2e3345; border-radius: 8px;
+      color: #8b8fa3; font-size: 12px; padding: 6px 12px; cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .pred-reload-btn:hover { border-color: #6c5ce7; color: #e4e6ef; }
+    .pred-meta { font-size: 11px; color: #8b8fa3; margin-left: auto; }
+
+    .pred-flag { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    .pred-flag.order-now  { background: #e17055; box-shadow: 0 0 6px #e1705588; }
+    .pred-flag.order-soon { background: #fdcb6e; }
+    .pred-flag.sufficient { background: #00b894; }
+    .pred-flag.no-data    { background: #4a4f66; }
+
+    .pred-flag-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .pred-flag-badge.order-now  { color: #e17055; }
+    .pred-flag-badge.order-soon { color: #fdcb6e; }
+    .pred-flag-badge.sufficient { color: #00b894; }
+    .pred-flag-badge.no-data    { color: #4a4f66; }
+
+    .covers-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .covers-bar {
+      flex: 1; height: 4px; border-radius: 2px; background: #2e3345;
+      min-width: 40px; max-width: 80px; overflow: hidden;
+    }
+    .covers-bar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
+
+    .pred-order-qty {
+      display: inline-block; background: #6c5ce722; border: 1px solid #6c5ce755;
+      border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700;
+      color: #a29bfe;
+    }
+    .pred-order-qty.zero { background: transparent; border-color: transparent; color: #4a4f66; font-weight: 400; }
+
+    .pred-note { font-size: 11px; color: #4a4f66; margin-top: 16px; line-height: 1.6; }
+    .pred-note strong { color: #6a6f8a; }
+
     /* ── Delivery modal — wide for review table ── */
     .modal.modal-wide { max-width: 780px; }
 
@@ -448,6 +495,7 @@
     <button class="tab active" data-tab="summary">Weekly Summary</button>
     <button class="tab" data-tab="sellers">Top Sellers</button>
     <button class="tab" data-tab="trends">Trends</button>
+    <button class="tab" data-tab="predict">Order Prediction</button>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -591,6 +639,57 @@
       <div class="chart-wrap"><canvas id="trendsUnitsChart" style="max-height:260px"></canvas></div>
     </div>
   </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       TAB: ORDER PREDICTION
+       ══════════════════════════════════════════════════════════ -->
+  <div class="section" data-tab="predict">
+
+    <div class="pred-controls">
+      <select id="predCatFilter">
+        <option value="">All categories</option>
+        <option value="Coffee">Coffee</option>
+        <option value="Shakes">Shakes</option>
+        <option value="Bars &amp; Snacks">Bars &amp; Snacks</option>
+        <option value="Functional Drinks">Functional Drinks</option>
+        <option value="Services">Services</option>
+      </select>
+      <select id="predBrandFilter">
+        <option value="">All brands</option>
+      </select>
+      <select id="predFlagFilter">
+        <option value="">All statuses</option>
+        <option value="order-now">🔴 Order now</option>
+        <option value="order-soon">🟡 Order soon</option>
+        <option value="sufficient">🟢 Sufficient</option>
+        <option value="no-data">⚪ No stock data</option>
+      </select>
+      <button class="pred-reload-btn" id="predReloadBtn">↻ Refresh</button>
+      <span class="pred-meta" id="predMeta"></span>
+    </div>
+
+    <div class="table-card">
+      <table id="predTable">
+        <thead>
+          <tr>
+            <th style="width:28px"></th>
+            <th>Product</th>
+            <th>Brand</th>
+            <th>Category</th>
+            <th class="right">Avg / wk</th>
+            <th class="right">Est. Stock</th>
+            <th>Covers</th>
+            <th class="right">Predicted Order</th>
+            <th class="right">Last Delivery</th>
+          </tr>
+        </thead>
+        <tbody id="predTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="pred-note" id="predNote"></div>
+
+  </div><!-- /predict section -->
 
 </div><!-- /container -->
 
@@ -1696,6 +1795,215 @@ function renderTrends() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ORDER PREDICTION TAB
+// ═══════════════════════════════════════════════════════════════════════════
+
+let allDeliveries = null; // lazy-loaded cache
+
+async function loadDeliveries(force = false) {
+  if (allDeliveries !== null && !force) return allDeliveries;
+  try {
+    const data = await sbGet('shop_deliveries', 'select=*&order=delivery_date.desc');
+    allDeliveries = Array.isArray(data) ? data : [];
+  } catch(e) {
+    console.warn('Could not load deliveries', e);
+    allDeliveries = [];
+  }
+  return allDeliveries;
+}
+
+async function renderOrderPrediction() {
+  const tbody   = document.getElementById('predTbody');
+  const metaEl  = document.getElementById('predMeta');
+  const noteEl  = document.getElementById('predNote');
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b8fa3;padding:24px">Loading…</td></tr>';
+
+  const deliveries = await loadDeliveries();
+
+  // ── Velocity: always last 4 weeks of paid data ──
+  const VELOCITY_WEEKS = 4;
+  const paid = allRecords.filter(r => (r.state || 'Paid') !== 'Refunded');
+  const allWeeks = getWeekKeys(paid);
+  const velCutoffWk = allWeeks.length >= VELOCITY_WEEKS
+    ? allWeeks.slice(-VELOCITY_WEEKS)[0]
+    : allWeeks[0] || null;
+  const velRecords = velCutoffWk ? paid.filter(r => r.weekStart >= velCutoffWk) : paid;
+  const velWeeksActual = Math.max(1, getWeekKeys(velRecords).length);
+
+  // ── Build velocity map (cafe only): product_name_raw → total qty in window ──
+  const velMap = {};
+  for (const r of velRecords) {
+    if (r.category === 'Merch') continue;
+    velMap[r.productNameRaw] = (velMap[r.productNameRaw] || 0) + r.quantity;
+  }
+
+  // ── Build delivery map ──
+  // product_name_raw → { totalReceived, firstDelivDate, lastDelivDate }
+  const delivMap = {};
+  for (const d of deliveries) {
+    if (!delivMap[d.product_name_raw]) {
+      delivMap[d.product_name_raw] = { totalReceived: 0, firstDelivDate: null, lastDelivDate: null };
+    }
+    delivMap[d.product_name_raw].totalReceived += d.quantity_received;
+    if (!delivMap[d.product_name_raw].firstDelivDate || d.delivery_date < delivMap[d.product_name_raw].firstDelivDate)
+      delivMap[d.product_name_raw].firstDelivDate = d.delivery_date;
+    if (!delivMap[d.product_name_raw].lastDelivDate || d.delivery_date > delivMap[d.product_name_raw].lastDelivDate)
+      delivMap[d.product_name_raw].lastDelivDate = d.delivery_date;
+  }
+
+  // ── Union of products: sold + delivered (cafe only) ──
+  const allKeys = new Set([...Object.keys(velMap), ...Object.keys(delivMap)]);
+
+  // ── Build rows ──
+  const rows = [];
+  const brandSet = new Set();
+
+  for (const key of allKeys) {
+    const info = productLookup[key] || {};
+    const cat  = info.category || getFallbackCategory(key);
+    if (cat === 'Merch') continue;
+
+    const brand       = info.brand || getFallbackBrand(key, cat);
+    const displayName = info.display_name || key;
+    brandSet.add(brand);
+
+    const totalVelUnits = velMap[key] || 0;
+    const avgPerWeek    = totalVelUnits / velWeeksActual;
+
+    // ── Stock estimation ──
+    const dInfo = delivMap[key];
+    let estStock = null, lastDelivDate = null;
+
+    if (dInfo) {
+      // Units sold since the first ever delivery date for this product
+      const soldSinceFirstDel = paid
+        .filter(r => r.productNameRaw === key && (r.date || '') >= dInfo.firstDelivDate)
+        .reduce((s, r) => s + r.quantity, 0);
+      estStock = Math.max(0, dInfo.totalReceived - soldSinceFirstDel);
+      lastDelivDate = dInfo.lastDelivDate;
+    }
+
+    // ── Covers (days) ──
+    let coversDays = null;
+    if (estStock !== null) {
+      coversDays = avgPerWeek > 0
+        ? Math.round((estStock / avgPerWeek) * 7)
+        : Infinity;
+    }
+
+    // ── Predicted order (units needed for next 2-week cycle) ──
+    let predictedOrder = null;
+    if (estStock !== null) {
+      predictedOrder = Math.max(0, Math.ceil((avgPerWeek * 2) - estStock));
+    }
+
+    // ── Flag ──
+    let flag, flagOrder;
+    if (estStock === null) {
+      flag = 'no-data'; flagOrder = 3;
+    } else if (avgPerWeek === 0) {
+      flag = 'sufficient'; flagOrder = 4; // no velocity → no urgency
+    } else if (coversDays === Infinity || coversDays > 14) {
+      flag = 'sufficient'; flagOrder = 2;
+    } else if (coversDays >= 7) {
+      flag = 'order-soon'; flagOrder = 1;
+    } else {
+      flag = 'order-now'; flagOrder = 0;
+    }
+
+    rows.push({ key, displayName, brand, cat, avgPerWeek, estStock, coversDays, predictedOrder, flag, flagOrder, lastDelivDate });
+  }
+
+  // ── Populate brand filter ──
+  const brandSel  = document.getElementById('predBrandFilter');
+  const prevBrand = brandSel.value;
+  const sortedBrands = [...brandSet].sort();
+  brandSel.innerHTML = '<option value="">All brands</option>' +
+    sortedBrands.map(b => `<option value="${b}"${b === prevBrand ? ' selected' : ''}>${b}</option>`).join('');
+
+  // ── Apply filters ──
+  const cafeFilter  = document.getElementById('predCatFilter').value;
+  const brandFilter = brandSel.value;
+  const flagFilter  = document.getElementById('predFlagFilter').value;
+
+  let filtered = rows;
+  if (cafeFilter)  filtered = filtered.filter(r => r.cat   === cafeFilter);
+  if (brandFilter) filtered = filtered.filter(r => r.brand === brandFilter);
+  if (flagFilter)  filtered = filtered.filter(r => r.flag  === flagFilter);
+
+  // Sort: flag urgency first, then velocity desc
+  filtered.sort((a, b) => a.flagOrder - b.flagOrder || b.avgPerWeek - a.avgPerWeek);
+
+  // ── Render ──
+  const FLAG_LABELS = {
+    'order-now':  '🔴 Order now',
+    'order-soon': '🟡 Order soon',
+    'sufficient': '🟢 Sufficient',
+    'no-data':    '⚪ No stock data',
+  };
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b8fa3;padding:24px">No products match current filters.</td></tr>';
+  } else {
+    tbody.innerHTML = filtered.map(r => {
+      // Covers bar: clamp to 0–28 days for visual
+      const barPct = r.coversDays === null ? 0
+        : r.coversDays === Infinity ? 100
+        : Math.min(100, (r.coversDays / 28) * 100);
+      const barCol = r.flag === 'order-now' ? '#e17055'
+        : r.flag === 'order-soon' ? '#fdcb6e'
+        : r.flag === 'sufficient' ? '#00b894' : '#4a4f66';
+
+      const coversCell = r.coversDays === null
+        ? '<span style="color:#4a4f66">—</span>'
+        : r.coversDays === Infinity
+          ? `<div class="covers-bar-wrap"><div class="covers-bar"><div class="covers-bar-fill" style="width:100%;background:${barCol}"></div></div><span style="color:#4a4f66;font-size:11px">∞</span></div>`
+          : `<div class="covers-bar-wrap"><div class="covers-bar"><div class="covers-bar-fill" style="width:${barPct}%;background:${barCol}"></div></div><span style="font-size:11px;white-space:nowrap">${r.coversDays}d</span></div>`;
+
+      const predCell = r.predictedOrder === null
+        ? '<span style="color:#4a4f66">—</span>'
+        : r.predictedOrder === 0
+          ? '<span class="pred-order-qty zero">0</span>'
+          : `<span class="pred-order-qty">${r.predictedOrder} units</span>`;
+
+      const estStockCell = r.estStock === null
+        ? '<span style="color:#4a4f66">—</span>'
+        : `${r.estStock}`;
+
+      const lastDelCell = r.lastDelivDate
+        ? (() => { const [y,m,d] = r.lastDelivDate.split('-'); return `${d}/${m}/${y}`; })()
+        : '<span style="color:#4a4f66">—</span>';
+
+      return `<tr>
+        <td><span class="pred-flag ${r.flag}"></span></td>
+        <td style="font-weight:600">${r.displayName}</td>
+        <td style="color:#8b8fa3">${r.brand}</td>
+        <td style="color:#8b8fa3">${r.cat}</td>
+        <td class="right">${r.avgPerWeek > 0 ? r.avgPerWeek.toFixed(1) : '—'}</td>
+        <td class="right">${estStockCell}</td>
+        <td>${coversCell}</td>
+        <td class="right">${predCell}</td>
+        <td class="right" style="color:#8b8fa3;font-size:11px">${lastDelCell}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Meta + note ──
+  const ordNow  = filtered.filter(r => r.flag === 'order-now').length;
+  const ordSoon = filtered.filter(r => r.flag === 'order-soon').length;
+  metaEl.textContent = `${filtered.length} products · ${ordNow} need ordering · ${ordSoon} order soon`;
+
+  const cutoffStr = velCutoffWk
+    ? (() => { const [y,m,d] = velCutoffWk.split('-'); return `${d}/${m}/${y}`; })()
+    : 'all time';
+  noteEl.innerHTML =
+    `<strong>How this works:</strong> Velocity = avg units/week over the last ${velWeeksActual} weeks of data (from ${cutoffStr}). ` +
+    `Estimated stock = total units received − units sold since first delivery. ` +
+    `Predicted order = units needed to cover a <strong>2-week cycle</strong> at current velocity. ` +
+    `Products with no delivery logged show velocity only — log a delivery to unlock stock estimates.`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RENDER DISPATCH
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1708,6 +2016,7 @@ function renderAll() {
     if (activeSub === 'merch') renderMerch();
   }
   if (activeTab === 'trends') renderTrends();
+  if (activeTab === 'predict') renderOrderPrediction();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2226,6 +2535,15 @@ async function init() {
 
   // ── Merch controls ──
   document.getElementById('showInactive').addEventListener('change', renderMerch);
+
+  // ── Order Prediction filters ──
+  ['predCatFilter', 'predBrandFilter', 'predFlagFilter'].forEach(id => {
+    document.getElementById(id).addEventListener('change', renderOrderPrediction);
+  });
+  document.getElementById('predReloadBtn').addEventListener('click', () => {
+    allDeliveries = null; // bust cache
+    renderOrderPrediction();
+  });
 
   // ── Log Delivery modal ──
   document.getElementById('logDeliveryBtn').addEventListener('click', openDeliveryModal);
