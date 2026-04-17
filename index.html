@@ -736,10 +736,13 @@
           <table class="invoice-review-table" id="pdfReviewTable">
             <thead>
               <tr>
-                <th>Invoice Product</th>
-                <th>Cases</th>
-                <th>Units/Case</th>
-                <th>Total Units</th>
+                <th>Product &amp; Variant</th>
+                <th>Pack</th>
+                <th>Shipped (cases)</th>
+                <th>Units / case</th>
+                <th>Total units</th>
+                <th class="right">£ / case</th>
+                <th class="right">Subtotal</th>
                 <th>Match in Dashboard</th>
               </tr>
             </thead>
@@ -2127,27 +2130,28 @@ async function submitDelivery() {
 
 // ── PDF parsing ───────────────────────────────────────────────────────────
 
-// Extract pack size from product name strings like:
-//   "Nocco BCAA 12 x 330ml"  → 12
-//   "Actiph Water | 24 x 600ml" → 24
-//   "UFIT 50g - 500ml x 8"  → 8
-//   "Barebell Bar 12 pack"  → 12
-function extractPackSize(name) {
-  // Pattern 1: "N x Xml/g/l" — cases × unit size
-  let m = name.match(/\b(\d+)\s*[xX×]\s*\d+\s*(?:ml|g|L|cl)/i);
+// Extract units-per-case count from a string.
+// Handles: "12 x 330ml", "8 x 500ml", "500ml x 8", "55g x 12", "24 x 600ml"
+function extractPackSize(text) {
+  // "N x [num][unit]" — N is the case count
+  let m = text.match(/\b(\d+)\s*[xX×]\s*\d+\s*(?:ml|g|l|cl)\b/i);
   if (m) return parseInt(m[1]);
-  // Pattern 2: "Xml/g x N" — unit size × count
-  m = name.match(/\d+\s*(?:ml|g|L|cl)\s*[xX×]\s*(\d+)/i);
+  // "[num][unit] x N" — N is the case count
+  m = text.match(/\b\d+\s*(?:ml|g|l|cl)\s*[xX×]\s*(\d+)\b/i);
   if (m) return parseInt(m[1]);
-  // Pattern 3: "N pack"
-  m = name.match(/\b(\d+)\s*pack/i);
+  // "N pack"
+  m = text.match(/\b(\d+)\s*pack\b/i);
   if (m) return parseInt(m[1]);
-  // Pattern 4: standalone "x N" or "N x" at end
-  m = name.match(/[xX×]\s*(\d+)\s*$/);
-  if (m) return parseInt(m[1]);
-  m = name.match(/^(\d+)\s*[xX×]\s/);
-  if (m) return parseInt(m[1]);
-  return 1; // single unit
+  return 1;
+}
+
+// Return the raw pack-size string as written, e.g. "12 x 330ml" or "500ml x 8"
+function extractPackStr(text) {
+  let m = text.match(/(\d+\s*[xX×]\s*\d+\s*(?:ml|g|l|cl))/i);
+  if (m) return m[1];
+  m = text.match(/(\d+\s*(?:ml|g|l|cl)\s*[xX×]\s*\d+)/i);
+  if (m) return m[1];
+  return null;
 }
 
 // Normalise a string for fuzzy matching
@@ -2171,8 +2175,8 @@ function matchScore(a, b) {
 }
 
 // Find best matching product_name_raw from productLookup
-function fuzzyMatchProduct(invoiceName) {
-  const norm = normStr(invoiceName);
+function fuzzyMatchProduct(matchName) {
+  const norm = normStr(matchName);
   const cafeProducts = getCafeProducts();
   let best = null, bestScore = 0;
   for (const p of cafeProducts) {
@@ -2183,37 +2187,32 @@ function fuzzyMatchProduct(invoiceName) {
   return { product: best, score: bestScore };
 }
 
-// Parse date from invoice text — looks for "Order Date: DD Month YYYY" or similar
+// Parse date from invoice — "Order Date:22 January 2026" / "22/01/2026"
 function parseInvoiceDate(text) {
-  // "22 January 2026" / "22/01/2026" / "Jan 22, 2026"
   const months = {january:1,february:2,march:3,april:4,may:5,june:6,
                   july:7,august:8,september:9,october:10,november:11,december:12,
                   jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
   let m;
-  m = text.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  // "Order Date:22 January 2026" or "22 January 2026" anywhere
+  m = text.match(/Order\s*Date\s*:?\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/i);
+  if (!m) m = text.match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
   if (m) {
     const mo = months[m[2].toLowerCase()];
     if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
   }
   m = text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-  m = text.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
-  if (m) {
-    const mo = months[m[1].toLowerCase()];
-    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
-  }
   return null;
 }
 
 // Parse invoice order number
 function parseInvoiceOrderNo(text) {
-  const m = text.match(/Order\s*(?:#|No\.?|Number)?\s*(\d{6,})/i);
+  const m = text.match(/Order\s*#\s*(\d{5,})/i);
   return m ? m[1] : null;
 }
 
-// Main PDF parsing function
+// Main PDF text extraction (pdf.js)
 async function parseInvoicePDF(file) {
-  // Initialise pdf.js worker
   if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -2225,7 +2224,6 @@ async function parseInvoicePDF(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    // Join items with space; add newline between rows (items with same y tend to be on same line)
     let lastY = null;
     for (const item of content.items) {
       if (lastY !== null && Math.abs(item.transform[5] - lastY) > 2) fullText += '\n';
@@ -2234,51 +2232,104 @@ async function parseInvoicePDF(file) {
     }
     fullText += '\n';
   }
-
   return fullText;
 }
 
-// Extract structured line items from raw text
+// ── Muscle Finesse invoice line parser ─────────────────────────────────────
+//
+// Each item produces two lines in the extracted text:
+//   "{Product with pack} | {Variant} {SKU}  £{price}  Ordered: {N}  £{subtotal}"
+//   "{possible SKU tail} Shipped: {N}"
+//
+// The | separator splits base product (with pack size) from variant name.
+// SKU is the last token after the variant (5+ digits, or ALLCAPS-with-dashes).
+// Pack size is in the base product, or after | for items like "Actiph Water | 24 x 600ml".
+//
 function extractInvoiceItems(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const items = [];
 
-  // Heuristic: a product line has a £ price and an "Ordered: N Shipped: N" or just numbers
-  // We look for lines that contain a quantity-like pattern after a product name
-  // Pattern for Muscle Finesse: "Product Name  SKU  £XX.XX  Ordered: N  Shipped: N  £XX.XX"
-  // or the text extraction may interleave them — we scan for quantity clues
+  // Anchor: line ending with "Ordered: N £X.XX"
+  const ITEM_RE = /^(.*?)\s+£([\d.,]+)\s+Ordered:\s*(\d+)\s+£[\d.,]+\s*$/;
+  // Shipped on the next 1-3 lines
+  const SHIP_RE = /Shipped:\s*(\d+)/;
+  // Trailing SKU: 5+ digit number OR ALLCAPS alphanumeric with dashes (at least 2 caps + digit or dash)
+  const SKU_RE  = /\s+(?:\d{5,}|[A-Z]{1,4}-[A-Z0-9-]+|[A-Z]{2,}[0-9]{3,})-?\s*$/;
 
-  const orderedShippedRe = /Ordered\s*:\s*(\d+)\s+Shipped\s*:\s*(\d+)/i;
-  const qtyInlineRe      = /\b(\d+)\s+(\d+)\b/; // fallback: two adjacent integers = ordered/shipped
-
-  let i = 0;
-  while (i < lines.length) {
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const m = line.match(ITEM_RE);
+    if (!m) continue;
 
-    // Skip header rows and totals
-    if (/^(Product Name|SKU|Price|Subtotal|Grand Total|Sub[\s-]?Total|Shipping|VAT|Discount|Order #|Order Date|Payment)/i.test(line)) { i++; continue; }
-    if (/^\$|^£\d|^Total/i.test(line)) { i++; continue; }
+    const productAndSku = m[1].trim();
+    const pricePerCase  = parseFloat(m[2].replace(',', ''));
+    const orderedQty    = parseInt(m[3]);
 
-    // Check if this line or next few lines have an "Ordered: N Shipped: N" pattern
-    let window = lines.slice(i, i + 5).join(' ');
-    const om = window.match(orderedShippedRe);
-    if (om) {
-      const shipped = parseInt(om[2]);
-      const productName = line
-        .replace(/£[\d.,]+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+    // Skip free / sample items
+    if (pricePerCase === 0) continue;
 
-      if (productName.length > 3 && !/^\d+$/.test(productName)) {
-        const packSize = extractPackSize(productName);
-        const totalUnits = shipped * packSize;
-        items.push({ invoiceName: productName, cases: shipped, packSize, totalUnits });
-      }
-      // Skip past the matched window
-      i += window.split('\n').length;
-      continue;
+    // Find shipped qty on the next 1-3 lines
+    let shippedQty = null;
+    for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+      const sm = lines[j].match(SHIP_RE);
+      if (sm) { shippedQty = parseInt(sm[1]); break; }
     }
-    i++;
+    if (shippedQty === null || shippedQty < 1) continue;
+
+    // Split on | — left = base product (with pack), right = variant + SKU
+    const pipeIdx = productAndSku.indexOf('|');
+    let baseRaw, variantAndSku;
+    if (pipeIdx !== -1) {
+      baseRaw       = productAndSku.slice(0, pipeIdx).trim();
+      variantAndSku = productAndSku.slice(pipeIdx + 1).trim();
+    } else {
+      baseRaw       = productAndSku;
+      variantAndSku = '';
+    }
+
+    // Strip trailing SKU from variant part
+    const variantClean = variantAndSku.replace(SKU_RE, '').trim();
+
+    // Extract pack size — base product first, fall back to variant (Actiph Water case)
+    const packFromBase    = extractPackSize(baseRaw);
+    const packFromVariant = extractPackSize(variantClean);
+    const packSize = packFromBase > 1 ? packFromBase : packFromVariant;
+
+    // Raw pack string for the "Pack" column
+    const packStr = extractPackStr(baseRaw) || extractPackStr(variantClean) || String(packSize);
+
+    // Is the variant purely a pack size description with no flavour words?
+    const variantHasWords = variantClean.replace(/\d+\s*[xX×]\s*\d+\s*(?:ml|g|l|cl)/gi, '').replace(/\s/g, '').length > 0;
+    const variant = (variantClean && variantHasWords) ? variantClean : null;
+
+    // Clean base product name: strip pack size notation for display
+    const baseDisplay = baseRaw
+      .replace(/\b\d+\s*[xX×]\s*\d+\s*(?:g|ml|l|cl)\b/gi, '')
+      .replace(/\b\d+\s*(?:g|ml|l|cl)\s*[xX×]\s*\d+\b/gi, '')
+      .replace(/\b\d+\s*(?:g|ml|l|cl)\b\s*-?\s*/gi, '')
+      .replace(/\s+/g, ' ').trim();
+
+    // Full display name for review table
+    const invoiceName = variant ? `${baseDisplay} | ${variant}` : baseDisplay;
+
+    // Match string for fuzzy lookup: base + variant without pack noise
+    const matchName = variant ? `${baseDisplay} ${variant}` : baseDisplay;
+
+    const subtotal = pricePerCase * shippedQty;
+
+    items.push({
+      invoiceName,
+      baseDisplay,
+      variant,
+      packStr,
+      packSize,
+      pricePerCase,
+      orderedQty,
+      shippedQty,
+      totalUnits: shippedQty * packSize,
+      subtotal,
+      matchName,
+    });
   }
 
   return items;
@@ -2287,7 +2338,9 @@ function extractInvoiceItems(text) {
 // Render the review table
 function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
   const meta = document.getElementById('pdfInvoiceMeta');
-  meta.innerHTML = `Invoice ${orderNo ? '<strong>#' + orderNo + '</strong>' : ''} · Date: <strong>${invoiceDateStr || 'unknown'}</strong> · <strong>${items.length}</strong> line items`;
+  meta.innerHTML = `Invoice ${orderNo ? '<strong>#' + orderNo + '</strong>' : ''}` +
+    ` · Date: <strong>${invoiceDateStr || 'unknown'}</strong>` +
+    ` · <strong>${items.length}</strong> line items`;
 
   const cafeProducts = getCafeProducts();
   const optionsHtml = '<option value="">— skip —</option>' +
@@ -2298,45 +2351,56 @@ function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
   const tbody = document.getElementById('pdfReviewBody');
   tbody.innerHTML = '';
 
+  window._pdfInvoiceRows    = items.map(i => Object.assign({}, i));
+  window._pdfInvoiceDate    = invoiceDateStr;
+  window._pdfInvoiceOrderNo = orderNo;
+
   items.forEach((item, idx) => {
-    const { product, score } = fuzzyMatchProduct(item.invoiceName);
-    const matchClass = score >= 0.8 ? 'match-good' : score >= 0.5 ? 'match-warn' : 'match-none';
-    const matchLabel = score >= 0.8 ? '✓' : score >= 0.5 ? '~' : '?';
-    const selectedVal = score >= 0.5 && product ? product.product_name_raw : '';
+    const { product, score } = fuzzyMatchProduct(item.matchName);
+    const matchClass = score >= 0.75 ? 'match-good' : score >= 0.45 ? 'match-warn' : 'match-none';
+    const matchLabel = score >= 0.75 ? '✓' : score >= 0.45 ? '~' : '?';
+    const selectedVal = score >= 0.45 && product ? product.product_name_raw : '';
+
+    const opts = optionsHtml.replace(
+      `value="${selectedVal}"`,
+      `value="${selectedVal}" selected`
+    );
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td style="max-width:200px;word-break:break-word">${item.invoiceName}</td>
-      <td style="text-align:center"><input type="number" class="pdf-cases" data-idx="${idx}" value="${item.cases}" min="1" style="width:60px"></td>
-      <td style="text-align:center"><input type="number" class="pdf-packsize" data-idx="${idx}" value="${item.packSize}" min="1" style="width:60px"></td>
-      <td style="text-align:center" class="pdf-total-cell" id="pdfTotal_${idx}">${item.totalUnits}</td>
+      <td style="font-weight:600;max-width:220px">${item.invoiceName}</td>
+      <td style="color:#8b8fa3;white-space:nowrap">${item.packStr}</td>
+      <td style="text-align:center">
+        <input type="number" class="pdf-cases" data-idx="${idx}"
+          value="${item.shippedQty}" min="1"
+          title="Ordered: ${item.orderedQty}  Shipped: ${item.shippedQty}">
+      </td>
+      <td style="text-align:center">
+        <input type="number" class="pdf-packsize" data-idx="${idx}"
+          value="${item.packSize}" min="1">
+      </td>
+      <td style="text-align:center;font-weight:600" id="pdfTotal_${idx}">${item.totalUnits}</td>
+      <td style="text-align:right;color:#8b8fa3">£${item.pricePerCase.toFixed(2)}</td>
+      <td style="text-align:right;color:#8b8fa3">£${item.subtotal.toFixed(2)}</td>
       <td>
         <span class="${matchClass}" style="margin-right:4px;font-weight:700">${matchLabel}</span>
-        <select class="pdf-match-sel" data-idx="${idx}">
-          ${optionsHtml.replace(`value="${selectedVal}"`, `value="${selectedVal}" selected`)}
-        </select>
+        <select class="pdf-match-sel" data-idx="${idx}">${opts}</select>
       </td>
     `;
     tbody.appendChild(tr);
 
-    // Keep totalUnits live as user edits cases/packsize
+    // Live-update total units as user edits cases or pack size
     tr.querySelectorAll('.pdf-cases, .pdf-packsize').forEach(inp => {
       inp.addEventListener('input', () => {
-        const row = tr;
-        const c = parseInt(row.querySelector('.pdf-cases').value) || 0;
-        const ps = parseInt(row.querySelector('.pdf-packsize').value) || 1;
+        const c  = parseInt(tr.querySelector('.pdf-cases').value)    || 0;
+        const ps = parseInt(tr.querySelector('.pdf-packsize').value) || 1;
         document.getElementById(`pdfTotal_${idx}`).textContent = c * ps;
-        window._pdfInvoiceRows[idx].cases    = c;
-        window._pdfInvoiceRows[idx].packSize = ps;
+        window._pdfInvoiceRows[idx].shippedQty = c;
+        window._pdfInvoiceRows[idx].packSize   = ps;
         window._pdfInvoiceRows[idx].totalUnits = c * ps;
       });
     });
   });
-
-  // Store for submit
-  window._pdfInvoiceRows     = items;
-  window._pdfInvoiceDate     = invoiceDateStr;
-  window._pdfInvoiceOrderNo  = orderNo;
 }
 
 // Submit all PDF-parsed deliveries
@@ -2351,17 +2415,16 @@ async function submitPdfDeliveries() {
 
   if (!date) {
     status.style.color = '#e17055';
-    status.textContent = 'Could not detect invoice date — check the PDF.';
+    status.textContent = 'Could not detect invoice date — please enter via manual entry.';
     return;
   }
 
   const deliveries = [];
   rows.forEach((tr, idx) => {
     const product = tr.querySelector('.pdf-match-sel').value;
-    if (!product) return; // user chose skip
-    const cases    = parseInt(tr.querySelector('.pdf-cases').value)    || 0;
-    const packSize = parseInt(tr.querySelector('.pdf-packsize').value) || 1;
-    const totalUnits = cases * packSize;
+    if (!product) return;
+    const row        = window._pdfInvoiceRows[idx];
+    const totalUnits = row ? row.totalUnits : 0;
     if (totalUnits < 1) return;
     deliveries.push({
       delivery_date:     date,
@@ -2373,11 +2436,12 @@ async function submitPdfDeliveries() {
 
   if (!deliveries.length) {
     status.style.color = '#e17055';
-    status.textContent = 'No items selected — assign products in the Match column.';
+    status.textContent = 'No items matched — use the dropdown to assign products, or skip.';
     return;
   }
 
-  status.style.color = '#8b8fa3'; status.textContent = `Saving ${deliveries.length} items…`;
+  status.style.color = '#8b8fa3';
+  status.textContent = `Saving ${deliveries.length} item${deliveries.length > 1 ? 's' : ''}...`;
   submitBtn.disabled = true;
 
   let saved = 0, failed = 0;
@@ -2389,12 +2453,14 @@ async function submitPdfDeliveries() {
   if (failed === 0) {
     status.style.color = '#00b894';
     status.textContent = `✓ ${saved} deliveries logged.`;
+    allDeliveries = null; // bust Order Prediction cache
   } else {
     status.style.color = '#fdcb6e';
     status.textContent = `${saved} logged, ${failed} failed — check console.`;
   }
   submitBtn.disabled = false;
 }
+
 
 // Handle PDF file selection
 async function handleInvoicePdf(file) {
