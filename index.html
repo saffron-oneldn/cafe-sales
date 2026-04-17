@@ -6,6 +6,7 @@
   <title>ONE LDN — Shop Dashboard</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -334,6 +335,59 @@
     .form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color: #6c5ce7; }
     .form-status { font-size: 12px; margin-top: 8px; }
 
+    /* ── Delivery modal — wide for review table ── */
+    .modal.modal-wide { max-width: 780px; }
+
+    /* ── Mode selection cards ── */
+    .delivery-mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+    .delivery-mode-card {
+      background: #232734; border: 1px solid #3a3f55; border-radius: 12px;
+      padding: 18px 16px; cursor: pointer; text-align: center;
+      transition: border-color .15s, background .15s;
+    }
+    .delivery-mode-card:hover { border-color: #6c5ce7; background: #2a2d3e; }
+    .delivery-mode-card .mode-icon { font-size: 28px; margin-bottom: 8px; }
+    .delivery-mode-card .mode-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .delivery-mode-card .mode-desc { font-size: 11px; color: #8b8fa3; line-height: 1.4; }
+
+    /* ── PDF step back ── */
+    .step-back-btn {
+      background: transparent; border: none; color: #8b8fa3; font-size: 12px;
+      cursor: pointer; padding: 0; display: flex; align-items: center; gap: 4px;
+      margin-bottom: 14px;
+    }
+    .step-back-btn:hover { color: #e4e6ef; }
+
+    /* ── Invoice review table ── */
+    .invoice-review-wrap { overflow-x: auto; }
+    .invoice-review-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    .invoice-review-table th {
+      text-align: left; padding: 6px 8px; font-size: 11px; color: #8b8fa3;
+      font-weight: 600; border-bottom: 1px solid #2e3345; white-space: nowrap;
+    }
+    .invoice-review-table td {
+      padding: 6px 8px; border-bottom: 1px solid #1e2130; vertical-align: middle;
+    }
+    .invoice-review-table tr:last-child td { border-bottom: none; }
+    .invoice-review-table tr:hover td { background: #1e2130; }
+    .invoice-review-table select {
+      background: #232734; border: 1px solid #3a3f55; border-radius: 6px;
+      color: #e4e6ef; padding: 4px 8px; font-size: 11px; width: 100%; min-width: 160px;
+    }
+    .invoice-review-table select:focus { outline: none; border-color: #6c5ce7; }
+    .invoice-review-table input[type="number"] {
+      background: #232734; border: 1px solid #3a3f55; border-radius: 6px;
+      color: #e4e6ef; padding: 4px 8px; font-size: 11px; width: 70px; text-align: center;
+    }
+    .invoice-review-table input[type="number"]:focus { outline: none; border-color: #6c5ce7; }
+    .match-good { color: #00b894; }
+    .match-warn { color: #fdcb6e; }
+    .match-none { color: #e17055; }
+    .invoice-meta { font-size: 11px; color: #8b8fa3; margin-bottom: 14px; }
+    .invoice-meta strong { color: #b0b3c6; }
+
     /* ── Responsive ── */
     @media (max-width: 900px) {
       .chart-row { grid-template-columns: 1fr; }
@@ -542,15 +596,63 @@
 
 <!-- ── Log Delivery Modal ── -->
 <div class="modal-overlay" id="deliveryModal">
-  <div class="modal">
+  <div class="modal" id="deliveryModalInner">
     <div class="modal-header">
       <div>
-        <h2>Log Delivery</h2>
-        <div class="modal-sub">Record stock received into the delivery log</div>
+        <h2 id="deliveryModalTitle">Log Delivery</h2>
+        <div class="modal-sub" id="deliveryModalSub">How would you like to log this delivery?</div>
       </div>
       <button class="modal-close" id="deliveryModalClose">✕</button>
     </div>
-    <div class="modal-body">
+
+    <!-- Step 1: choose mode -->
+    <div class="modal-body" id="deliveryStep1">
+      <div class="delivery-mode-cards">
+        <div class="delivery-mode-card" id="modePdfCard">
+          <div class="mode-icon">📄</div>
+          <div class="mode-title">Upload Invoice PDF</div>
+          <div class="mode-desc">Upload a Muscle Finesse Wholesale invoice — items auto-populated from the PDF</div>
+        </div>
+        <div class="delivery-mode-card" id="modeManualCard">
+          <div class="mode-icon">✏️</div>
+          <div class="mode-title">Manual Entry</div>
+          <div class="mode-desc">Enter a single product delivery by hand</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2a: PDF upload + review -->
+    <div class="modal-body" id="deliveryStepPdf" style="display:none">
+      <button class="step-back-btn" id="pdfBackBtn">← Back</button>
+      <div id="pdfUploadArea" style="border:2px dashed #3a3f55;border-radius:12px;padding:32px;text-align:center;cursor:pointer;margin-bottom:16px;transition:border-color .15s">
+        <div style="font-size:28px;margin-bottom:8px">📄</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Drop invoice PDF here or click to browse</div>
+        <div style="font-size:11px;color:#8b8fa3">Muscle Finesse Wholesale format</div>
+        <input type="file" id="pdfFileInput" accept=".pdf" style="display:none">
+      </div>
+      <div id="pdfParsing" style="display:none;text-align:center;padding:16px;color:#8b8fa3;font-size:13px">⏳ Reading invoice…</div>
+      <div id="pdfReviewArea" style="display:none">
+        <div class="invoice-meta" id="pdfInvoiceMeta"></div>
+        <div class="invoice-review-wrap">
+          <table class="invoice-review-table" id="pdfReviewTable">
+            <thead>
+              <tr>
+                <th>Invoice Product</th>
+                <th>Cases</th>
+                <th>Units/Case</th>
+                <th>Total Units</th>
+                <th>Match in Dashboard</th>
+              </tr>
+            </thead>
+            <tbody id="pdfReviewBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2b: Manual form -->
+    <div class="modal-body" id="deliveryStepManual" style="display:none">
+      <button class="step-back-btn" id="manualBackBtn">← Back</button>
       <div class="form-row">
         <label>Delivery date</label>
         <input type="date" id="deliveryDate">
@@ -570,8 +672,10 @@
         <textarea id="deliveryNotes" rows="2" placeholder="e.g. Nocco invoice #1234"></textarea>
       </div>
     </div>
-    <div class="modal-footer" style="display:flex;align-items:center;gap:10px">
-      <button class="banner-btn" id="deliverySubmitBtn">Log Delivery</button>
+
+    <div class="modal-footer" style="display:flex;align-items:center;gap:10px" id="deliveryFooter">
+      <button class="banner-btn" id="deliverySubmitBtn" style="display:none">Log Delivery</button>
+      <button class="banner-btn" id="pdfSubmitBtn" style="display:none">Log All Items</button>
       <div class="form-status" id="deliveryStatus"></div>
     </div>
   </div>
@@ -1472,7 +1576,7 @@ function renderMerch() {
 
     Object.values(data.products).sort((a, b) => b.units - a.units).forEach(p => {
       const sizeChips = Object.entries(p.sizes).sort((a, b) => b[1] - a[1])
-        .map(([s, u]) => `<span class="size-chip has-sales" title="${u} sold">${s}</span>`).join('');
+        .map(([s, u]) => `<span class="size-chip has-sales">${s} <span style="opacity:.7">×${u}</span></span>`).join('');
       const colourDisplay = Object.keys(p.colourways).join(', ') || '—';
       rows.push(`
         <tr class="collection-product-row" data-coll-id="${collId}">
@@ -1610,16 +1714,72 @@ function renderAll() {
 // LOG DELIVERY MODAL
 // ═══════════════════════════════════════════════════════════════════════════
 
-function populateDeliveryProductSelect() {
-  const sel = document.getElementById('deliveryProduct');
-  const products = Object.values(productLookup)
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+function getCafeProducts() {
+  return Object.values(productLookup)
     .filter(p => p.active !== false && p.category !== 'Merch')
     .sort((a, b) => (a.display_name || a.product_name_raw).localeCompare(b.display_name || b.product_name_raw));
+}
+
+function populateDeliveryProductSelect() {
+  const sel = document.getElementById('deliveryProduct');
+  const products = getCafeProducts();
   sel.innerHTML = '<option value="">Select a product…</option>' +
     products.map(p =>
       `<option value="${p.product_name_raw}">${p.display_name || p.product_name_raw}</option>`
     ).join('');
 }
+
+// ── Modal step navigation ─────────────────────────────────────────────────
+
+function showDeliveryStep(step) {
+  // step: 'choose' | 'pdf' | 'manual'
+  document.getElementById('deliveryStep1').style.display      = step === 'choose'  ? '' : 'none';
+  document.getElementById('deliveryStepPdf').style.display    = step === 'pdf'     ? '' : 'none';
+  document.getElementById('deliveryStepManual').style.display = step === 'manual'  ? '' : 'none';
+  document.getElementById('deliverySubmitBtn').style.display  = step === 'manual'  ? '' : 'none';
+  document.getElementById('pdfSubmitBtn').style.display       = step === 'pdf'     ? '' : 'none';
+  document.getElementById('deliveryStatus').textContent       = '';
+
+  const titleEl = document.getElementById('deliveryModalTitle');
+  const subEl   = document.getElementById('deliveryModalSub');
+  const inner   = document.getElementById('deliveryModalInner');
+
+  if (step === 'choose') {
+    titleEl.textContent = 'Log Delivery';
+    subEl.textContent   = 'How would you like to log this delivery?';
+    inner.classList.remove('modal-wide');
+  } else if (step === 'pdf') {
+    titleEl.textContent = 'Log Delivery — Upload Invoice';
+    subEl.textContent   = 'Upload a Muscle Finesse Wholesale PDF invoice';
+    inner.classList.add('modal-wide');
+  } else if (step === 'manual') {
+    titleEl.textContent = 'Log Delivery — Manual Entry';
+    subEl.textContent   = 'Record a single product delivery';
+    inner.classList.remove('modal-wide');
+    populateDeliveryProductSelect();
+  }
+}
+
+function openDeliveryModal() {
+  // Reset PDF state
+  document.getElementById('pdfUploadArea').style.display   = '';
+  document.getElementById('pdfParsing').style.display      = 'none';
+  document.getElementById('pdfReviewArea').style.display   = 'none';
+  document.getElementById('pdfFileInput').value            = '';
+  document.getElementById('pdfReviewBody').innerHTML       = '';
+  document.getElementById('pdfInvoiceMeta').textContent    = '';
+  window._pdfInvoiceRows = [];
+  showDeliveryStep('choose');
+  document.getElementById('deliveryModal').classList.add('open');
+}
+
+function closeDeliveryModal() {
+  document.getElementById('deliveryModal').classList.remove('open');
+}
+
+// ── Manual entry submit ───────────────────────────────────────────────────
 
 async function submitDelivery() {
   const date    = document.getElementById('deliveryDate').value;
@@ -1628,8 +1788,8 @@ async function submitDelivery() {
   const notes   = document.getElementById('deliveryNotes').value.trim() || null;
   const status  = document.getElementById('deliveryStatus');
 
-  if (!date)    { status.style.color = '#e17055'; status.textContent = 'Please select a date.'; return; }
-  if (!product) { status.style.color = '#e17055'; status.textContent = 'Please select a product.'; return; }
+  if (!date)           { status.style.color = '#e17055'; status.textContent = 'Please select a date.'; return; }
+  if (!product)        { status.style.color = '#e17055'; status.textContent = 'Please select a product.'; return; }
   if (!qty || qty < 1) { status.style.color = '#e17055'; status.textContent = 'Enter a valid quantity.'; return; }
 
   status.style.color = '#8b8fa3'; status.textContent = 'Saving…';
@@ -1644,16 +1804,324 @@ async function submitDelivery() {
     });
     status.style.color = '#00b894';
     status.textContent = '✓ Delivery logged.';
-    document.getElementById('deliveryDate').value = '';
+    document.getElementById('deliveryDate').value    = '';
     document.getElementById('deliveryProduct').value = '';
-    document.getElementById('deliveryQty').value = '';
-    document.getElementById('deliveryNotes').value = '';
+    document.getElementById('deliveryQty').value     = '';
+    document.getElementById('deliveryNotes').value   = '';
   } catch(e) {
     status.style.color = '#e17055';
     status.textContent = 'Save failed — ' + e.message;
   }
 
   document.getElementById('deliverySubmitBtn').disabled = false;
+}
+
+// ── PDF parsing ───────────────────────────────────────────────────────────
+
+// Extract pack size from product name strings like:
+//   "Nocco BCAA 12 x 330ml"  → 12
+//   "Actiph Water | 24 x 600ml" → 24
+//   "UFIT 50g - 500ml x 8"  → 8
+//   "Barebell Bar 12 pack"  → 12
+function extractPackSize(name) {
+  // Pattern 1: "N x Xml/g/l" — cases × unit size
+  let m = name.match(/\b(\d+)\s*[xX×]\s*\d+\s*(?:ml|g|L|cl)/i);
+  if (m) return parseInt(m[1]);
+  // Pattern 2: "Xml/g x N" — unit size × count
+  m = name.match(/\d+\s*(?:ml|g|L|cl)\s*[xX×]\s*(\d+)/i);
+  if (m) return parseInt(m[1]);
+  // Pattern 3: "N pack"
+  m = name.match(/\b(\d+)\s*pack/i);
+  if (m) return parseInt(m[1]);
+  // Pattern 4: standalone "x N" or "N x" at end
+  m = name.match(/[xX×]\s*(\d+)\s*$/);
+  if (m) return parseInt(m[1]);
+  m = name.match(/^(\d+)\s*[xX×]\s/);
+  if (m) return parseInt(m[1]);
+  return 1; // single unit
+}
+
+// Normalise a string for fuzzy matching
+function normStr(s) {
+  return s.toLowerCase()
+    .replace(/[|·•\-_]/g, ' ')
+    .replace(/\b\d+\s*(ml|g|l|cl|pack|x)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Score how well two normalised strings match (0–1)
+function matchScore(a, b) {
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.9;
+  const wordsA = new Set(a.split(' ').filter(w => w.length > 2));
+  const wordsB = b.split(' ').filter(w => w.length > 2);
+  if (!wordsA.size || !wordsB.length) return 0;
+  const hits = wordsB.filter(w => wordsA.has(w)).length;
+  return hits / Math.max(wordsA.size, wordsB.length);
+}
+
+// Find best matching product_name_raw from productLookup
+function fuzzyMatchProduct(invoiceName) {
+  const norm = normStr(invoiceName);
+  const cafeProducts = getCafeProducts();
+  let best = null, bestScore = 0;
+  for (const p of cafeProducts) {
+    const candidate = normStr(p.display_name || p.product_name_raw);
+    const score = matchScore(norm, candidate);
+    if (score > bestScore) { bestScore = score; best = p; }
+  }
+  return { product: best, score: bestScore };
+}
+
+// Parse date from invoice text — looks for "Order Date: DD Month YYYY" or similar
+function parseInvoiceDate(text) {
+  // "22 January 2026" / "22/01/2026" / "Jan 22, 2026"
+  const months = {january:1,february:2,march:3,april:4,may:5,june:6,
+                  july:7,august:8,september:9,october:10,november:11,december:12,
+                  jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  let m;
+  m = text.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  if (m) {
+    const mo = months[m[2].toLowerCase()];
+    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+  }
+  m = text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  m = text.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
+  if (m) {
+    const mo = months[m[1].toLowerCase()];
+    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+// Parse invoice order number
+function parseInvoiceOrderNo(text) {
+  const m = text.match(/Order\s*(?:#|No\.?|Number)?\s*(\d{6,})/i);
+  return m ? m[1] : null;
+}
+
+// Main PDF parsing function
+async function parseInvoicePDF(file) {
+  // Initialise pdf.js worker
+  if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // Join items with space; add newline between rows (items with same y tend to be on same line)
+    let lastY = null;
+    for (const item of content.items) {
+      if (lastY !== null && Math.abs(item.transform[5] - lastY) > 2) fullText += '\n';
+      fullText += item.str + ' ';
+      lastY = item.transform[5];
+    }
+    fullText += '\n';
+  }
+
+  return fullText;
+}
+
+// Extract structured line items from raw text
+function extractInvoiceItems(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const items = [];
+
+  // Heuristic: a product line has a £ price and an "Ordered: N Shipped: N" or just numbers
+  // We look for lines that contain a quantity-like pattern after a product name
+  // Pattern for Muscle Finesse: "Product Name  SKU  £XX.XX  Ordered: N  Shipped: N  £XX.XX"
+  // or the text extraction may interleave them — we scan for quantity clues
+
+  const orderedShippedRe = /Ordered\s*:\s*(\d+)\s+Shipped\s*:\s*(\d+)/i;
+  const qtyInlineRe      = /\b(\d+)\s+(\d+)\b/; // fallback: two adjacent integers = ordered/shipped
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Skip header rows and totals
+    if (/^(Product Name|SKU|Price|Subtotal|Grand Total|Sub[\s-]?Total|Shipping|VAT|Discount|Order #|Order Date|Payment)/i.test(line)) { i++; continue; }
+    if (/^\$|^£\d|^Total/i.test(line)) { i++; continue; }
+
+    // Check if this line or next few lines have an "Ordered: N Shipped: N" pattern
+    let window = lines.slice(i, i + 5).join(' ');
+    const om = window.match(orderedShippedRe);
+    if (om) {
+      const shipped = parseInt(om[2]);
+      const productName = line
+        .replace(/£[\d.,]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (productName.length > 3 && !/^\d+$/.test(productName)) {
+        const packSize = extractPackSize(productName);
+        const totalUnits = shipped * packSize;
+        items.push({ invoiceName: productName, cases: shipped, packSize, totalUnits });
+      }
+      // Skip past the matched window
+      i += window.split('\n').length;
+      continue;
+    }
+    i++;
+  }
+
+  return items;
+}
+
+// Render the review table
+function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
+  const meta = document.getElementById('pdfInvoiceMeta');
+  meta.innerHTML = `Invoice ${orderNo ? '<strong>#' + orderNo + '</strong>' : ''} · Date: <strong>${invoiceDateStr || 'unknown'}</strong> · <strong>${items.length}</strong> line items`;
+
+  const cafeProducts = getCafeProducts();
+  const optionsHtml = '<option value="">— skip —</option>' +
+    cafeProducts.map(p =>
+      `<option value="${p.product_name_raw}">${p.display_name || p.product_name_raw}</option>`
+    ).join('');
+
+  const tbody = document.getElementById('pdfReviewBody');
+  tbody.innerHTML = '';
+
+  items.forEach((item, idx) => {
+    const { product, score } = fuzzyMatchProduct(item.invoiceName);
+    const matchClass = score >= 0.8 ? 'match-good' : score >= 0.5 ? 'match-warn' : 'match-none';
+    const matchLabel = score >= 0.8 ? '✓' : score >= 0.5 ? '~' : '?';
+    const selectedVal = score >= 0.5 && product ? product.product_name_raw : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="max-width:200px;word-break:break-word">${item.invoiceName}</td>
+      <td style="text-align:center"><input type="number" class="pdf-cases" data-idx="${idx}" value="${item.cases}" min="1" style="width:60px"></td>
+      <td style="text-align:center"><input type="number" class="pdf-packsize" data-idx="${idx}" value="${item.packSize}" min="1" style="width:60px"></td>
+      <td style="text-align:center" class="pdf-total-cell" id="pdfTotal_${idx}">${item.totalUnits}</td>
+      <td>
+        <span class="${matchClass}" style="margin-right:4px;font-weight:700">${matchLabel}</span>
+        <select class="pdf-match-sel" data-idx="${idx}">
+          ${optionsHtml.replace(`value="${selectedVal}"`, `value="${selectedVal}" selected`)}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+
+    // Keep totalUnits live as user edits cases/packsize
+    tr.querySelectorAll('.pdf-cases, .pdf-packsize').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const row = tr;
+        const c = parseInt(row.querySelector('.pdf-cases').value) || 0;
+        const ps = parseInt(row.querySelector('.pdf-packsize').value) || 1;
+        document.getElementById(`pdfTotal_${idx}`).textContent = c * ps;
+        window._pdfInvoiceRows[idx].cases    = c;
+        window._pdfInvoiceRows[idx].packSize = ps;
+        window._pdfInvoiceRows[idx].totalUnits = c * ps;
+      });
+    });
+  });
+
+  // Store for submit
+  window._pdfInvoiceRows     = items;
+  window._pdfInvoiceDate     = invoiceDateStr;
+  window._pdfInvoiceOrderNo  = orderNo;
+}
+
+// Submit all PDF-parsed deliveries
+async function submitPdfDeliveries() {
+  const status    = document.getElementById('deliveryStatus');
+  const submitBtn = document.getElementById('pdfSubmitBtn');
+  const tbody     = document.getElementById('pdfReviewBody');
+  const rows      = tbody.querySelectorAll('tr');
+  const date      = window._pdfInvoiceDate;
+  const orderNo   = window._pdfInvoiceOrderNo;
+  const noteBase  = orderNo ? `Invoice #${orderNo}` : 'PDF invoice';
+
+  if (!date) {
+    status.style.color = '#e17055';
+    status.textContent = 'Could not detect invoice date — check the PDF.';
+    return;
+  }
+
+  const deliveries = [];
+  rows.forEach((tr, idx) => {
+    const product = tr.querySelector('.pdf-match-sel').value;
+    if (!product) return; // user chose skip
+    const cases    = parseInt(tr.querySelector('.pdf-cases').value)    || 0;
+    const packSize = parseInt(tr.querySelector('.pdf-packsize').value) || 1;
+    const totalUnits = cases * packSize;
+    if (totalUnits < 1) return;
+    deliveries.push({
+      delivery_date:     date,
+      product_name_raw:  product,
+      quantity_received: totalUnits,
+      notes:             noteBase,
+    });
+  });
+
+  if (!deliveries.length) {
+    status.style.color = '#e17055';
+    status.textContent = 'No items selected — assign products in the Match column.';
+    return;
+  }
+
+  status.style.color = '#8b8fa3'; status.textContent = `Saving ${deliveries.length} items…`;
+  submitBtn.disabled = true;
+
+  let saved = 0, failed = 0;
+  for (const d of deliveries) {
+    try { await sbInsert('shop_deliveries', d); saved++; }
+    catch(e) { failed++; console.warn('Delivery insert failed:', e, d); }
+  }
+
+  if (failed === 0) {
+    status.style.color = '#00b894';
+    status.textContent = `✓ ${saved} deliveries logged.`;
+  } else {
+    status.style.color = '#fdcb6e';
+    status.textContent = `${saved} logged, ${failed} failed — check console.`;
+  }
+  submitBtn.disabled = false;
+}
+
+// Handle PDF file selection
+async function handleInvoicePdf(file) {
+  if (!file || file.type !== 'application/pdf') {
+    document.getElementById('deliveryStatus').style.color = '#e17055';
+    document.getElementById('deliveryStatus').textContent = 'Please select a PDF file.';
+    return;
+  }
+
+  document.getElementById('pdfUploadArea').style.display  = 'none';
+  document.getElementById('pdfParsing').style.display     = '';
+  document.getElementById('pdfReviewArea').style.display  = 'none';
+
+  try {
+    const text  = await parseInvoicePDF(file);
+    const items = extractInvoiceItems(text);
+    const date  = parseInvoiceDate(text);
+    const order = parseInvoiceOrderNo(text);
+
+    document.getElementById('pdfParsing').style.display     = 'none';
+    document.getElementById('pdfReviewArea').style.display  = '';
+
+    if (!items.length) {
+      document.getElementById('pdfInvoiceMeta').innerHTML =
+        '<span style="color:#e17055">Could not extract line items — try manual entry.</span>';
+      return;
+    }
+
+    renderPdfReviewTable(items, date, order);
+  } catch(e) {
+    document.getElementById('pdfParsing').style.display = 'none';
+    document.getElementById('pdfUploadArea').style.display = '';
+    document.getElementById('deliveryStatus').style.color = '#e17055';
+    document.getElementById('deliveryStatus').textContent = 'Failed to read PDF: ' + e.message;
+    console.error(e);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1760,19 +2228,42 @@ async function init() {
   document.getElementById('showInactive').addEventListener('change', renderMerch);
 
   // ── Log Delivery modal ──
-  document.getElementById('logDeliveryBtn').addEventListener('click', () => {
-    populateDeliveryProductSelect();
-    document.getElementById('deliveryStatus').textContent = '';
-    document.getElementById('deliveryModal').classList.add('open');
-  });
-  document.getElementById('deliveryModalClose').addEventListener('click', () => {
-    document.getElementById('deliveryModal').classList.remove('open');
-  });
+  document.getElementById('logDeliveryBtn').addEventListener('click', openDeliveryModal);
+  document.getElementById('deliveryModalClose').addEventListener('click', closeDeliveryModal);
   document.getElementById('deliveryModal').addEventListener('click', e => {
-    if (e.target === document.getElementById('deliveryModal'))
-      document.getElementById('deliveryModal').classList.remove('open');
+    if (e.target === document.getElementById('deliveryModal')) closeDeliveryModal();
   });
+
+  // Step 1: mode selection
+  document.getElementById('modePdfCard').addEventListener('click', () => showDeliveryStep('pdf'));
+  document.getElementById('modeManualCard').addEventListener('click', () => showDeliveryStep('manual'));
+
+  // Back buttons
+  document.getElementById('pdfBackBtn').addEventListener('click', () => showDeliveryStep('choose'));
+  document.getElementById('manualBackBtn').addEventListener('click', () => showDeliveryStep('choose'));
+
+  // Manual submit
   document.getElementById('deliverySubmitBtn').addEventListener('click', submitDelivery);
+
+  // PDF submit
+  document.getElementById('pdfSubmitBtn').addEventListener('click', submitPdfDeliveries);
+
+  // PDF file input — click-to-browse
+  const pdfUploadArea  = document.getElementById('pdfUploadArea');
+  const pdfFileInput   = document.getElementById('pdfFileInput');
+  pdfUploadArea.addEventListener('click', () => pdfFileInput.click());
+  pdfUploadArea.addEventListener('dragover', e => { e.preventDefault(); pdfUploadArea.style.borderColor = '#6c5ce7'; });
+  pdfUploadArea.addEventListener('dragleave', () => pdfUploadArea.style.borderColor = '#3a3f55');
+  pdfUploadArea.addEventListener('drop', e => {
+    e.preventDefault(); pdfUploadArea.style.borderColor = '#3a3f55';
+    const f = e.dataTransfer.files[0];
+    if (f) handleInvoicePdf(f);
+  });
+  pdfFileInput.addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (f) handleInvoicePdf(f);
+    pdfFileInput.value = '';
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
