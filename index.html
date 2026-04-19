@@ -725,11 +725,11 @@
       <button class="step-back-btn" id="pdfBackBtn">← Back</button>
       <div id="pdfUploadArea" style="border:2px dashed #3a3f55;border-radius:12px;padding:32px;text-align:center;cursor:pointer;margin-bottom:16px;transition:border-color .15s">
         <div style="font-size:28px;margin-bottom:8px">📄</div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Drop invoice PDF here or click to browse</div>
-        <div style="font-size:11px;color:#8b8fa3">Muscle Finesse Wholesale format</div>
-        <input type="file" id="pdfFileInput" accept=".pdf" style="display:none">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Drop invoice PDFs here or click to browse</div>
+        <div style="font-size:11px;color:#8b8fa3">Multiple PDFs supported · Muscle Finesse Wholesale format</div>
+        <input type="file" id="pdfFileInput" accept=".pdf" multiple style="display:none">
       </div>
-      <div id="pdfParsing" style="display:none;text-align:center;padding:16px;color:#8b8fa3;font-size:13px">⏳ Reading invoice…</div>
+      <div id="pdfParsing" style="display:none;text-align:center;padding:16px;color:#8b8fa3;font-size:13px">⏳ Reading invoices…</div>
       <div id="pdfReviewArea" style="display:none">
         <div class="invoice-meta" id="pdfInvoiceMeta"></div>
         <div class="invoice-review-wrap">
@@ -2260,110 +2260,172 @@ async function parseInvoicePDF(file) {
 
 // ── Muscle Finesse invoice line parser ─────────────────────────────────────
 //
-// Each item produces two lines in the extracted text:
-//   "{Product with pack} | {Variant} {SKU}  £{price}  Ordered: {N}  £{subtotal}"
-//   "{possible SKU tail} Shipped: {N}"
+// Parser is anchored on "Ordered: N" — the most reliable token in the invoice.
+// We do NOT require a specific £ pattern since pdf.js may encode the pound sign
+// differently (U+00A3, £, or omit it). Instead we find the last decimal number
+// before "Ordered:" as the price, and the product name is everything before that.
 //
-// The | separator splits base product (with pack size) from variant name.
-// SKU is the last token after the variant (5+ digits, or ALLCAPS-with-dashes).
-// Pack size is in the base product, or after | for items like "Actiph Water | 24 x 600ml".
+// Per-item text produced by pdf.js (after line reconstruction):
+//   Line A: "{Product + pack} | {Variant} {SKU} [£]price Ordered: N [£]subtotal"
+//   Line B: "[partial SKU] Shipped: N"
 //
 function extractInvoiceItems(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const items = [];
 
-  // Anchor: line ending with "Ordered: N £X.XX"
-  const ITEM_RE = /^(.*?)\s+£([\d.,]+)\s+Ordered:\s*(\d+)\s+£[\d.,]+\s*$/;
-  // Shipped on the next 1-3 lines
-  const SHIP_RE = /Shipped:\s*(\d+)/;
-  // Trailing SKU: 5+ digit number OR ALLCAPS alphanumeric with dashes (at least 2 caps + digit or dash)
+  // Trailing SKU: 5+ digit number OR ALLCAPS alphanum with dashes
   const SKU_RE  = /\s+(?:\d{5,}|[A-Z]{1,4}-[A-Z0-9-]+|[A-Z]{2,}[0-9]{3,})-?\s*$/;
+  const SHIP_RE = /Shipped:\s*(\d+)/i;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const m = line.match(ITEM_RE);
-    if (!m) continue;
 
-    const productAndSku = m[1].trim();
-    const pricePerCase  = parseFloat(m[2].replace(',', ''));
-    const orderedQty    = parseInt(m[3]);
+    // Anchor: line must contain "Ordered: N"
+    const ordMatch = line.match(/Ordered:\s*(\d+)/i);
+    if (!ordMatch) continue;
 
-    // Skip free / sample items
-    if (pricePerCase === 0) continue;
+    const orderedQty = parseInt(ordMatch[1]);
+    const ordIdx     = line.indexOf(ordMatch[0]);
+    const beforeOrd  = line.slice(0, ordIdx).trim();
 
-    // Find shipped qty on the next 1-3 lines
+    // Skip header / footer rows
+    if (/^(Product\s*Name|SKU|Price|Qty|Subtotal|Grand\s*Total|Shipping|Tax|Order\s*#|Order\s*Date)/i.test(beforeOrd)) continue;
+
+    // Find price: last number of format X.XX in the text before "Ordered:"
+    // Works regardless of whether £ is present
+    const priceMatches = [...beforeOrd.matchAll(/[\d,]+\.[\d]{2}/g)];
+    if (!priceMatches.length) continue;
+    const lastPriceStr = priceMatches[priceMatches.length - 1][0];
+    const pricePerCase = parseFloat(lastPriceStr.replace(',', ''));
+    if (pricePerCase === 0) continue; // skip free / sample items
+
+    // Product + SKU = everything before the price
+    const pricePos   = beforeOrd.lastIndexOf(lastPriceStr);
+    const productRaw = beforeOrd.slice(0, pricePos).replace(/[£\u00a3$]/g, '').trim();
+    if (!productRaw || productRaw.length < 4) continue;
+
+    // Find Shipped: N within next 1-3 lines
     let shippedQty = null;
     for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
       const sm = lines[j].match(SHIP_RE);
       if (sm) { shippedQty = parseInt(sm[1]); break; }
     }
-    if (shippedQty === null || shippedQty < 1) continue;
+    if (!shippedQty || shippedQty < 1) continue;
 
     // Split on | — left = base product (with pack), right = variant + SKU
-    const pipeIdx = productAndSku.indexOf('|');
+    const pipeIdx = productRaw.indexOf('|');
     let baseRaw, variantAndSku;
     if (pipeIdx !== -1) {
-      baseRaw       = productAndSku.slice(0, pipeIdx).trim();
-      variantAndSku = productAndSku.slice(pipeIdx + 1).trim();
+      baseRaw       = productRaw.slice(0, pipeIdx).trim();
+      variantAndSku = productRaw.slice(pipeIdx + 1).trim();
     } else {
-      baseRaw       = productAndSku;
+      baseRaw       = productRaw;
       variantAndSku = '';
     }
 
-    // Strip trailing SKU from variant part
+    // Strip trailing SKU from variant
     const variantClean = variantAndSku.replace(SKU_RE, '').trim();
 
-    // Extract pack size — base product first, fall back to variant (Actiph Water case)
+    // Extract pack size — base first, then variant (Actiph Water case)
     const packFromBase    = extractPackSize(baseRaw);
     const packFromVariant = extractPackSize(variantClean);
     const packSize = packFromBase > 1 ? packFromBase : packFromVariant;
 
-    // Raw pack string for the "Pack" column
+    // Raw pack string for display
     const packStr = extractPackStr(baseRaw) || extractPackStr(variantClean) || String(packSize);
 
-    // Is the variant purely a pack size description with no flavour words?
-    const variantHasWords = variantClean.replace(/\d+\s*[xX×]\s*\d+\s*(?:ml|g|l|cl)/gi, '').replace(/\s/g, '').length > 0;
-    const variant = (variantClean && variantHasWords) ? variantClean : null;
+    // Is variant purely a pack description (no real flavour words)?
+    const variantNoNums = variantClean.replace(/\d+\s*[xX×]\s*\d+\s*(?:ml|g|l|cl)/gi, '').replace(/\s/g, '');
+    const variant = (variantClean && variantNoNums.length > 0) ? variantClean : null;
 
-    // Clean base product name: strip pack size notation for display
+    // Clean base display: strip pack notation
     const baseDisplay = baseRaw
       .replace(/\b\d+\s*[xX×]\s*\d+\s*(?:g|ml|l|cl)\b/gi, '')
       .replace(/\b\d+\s*(?:g|ml|l|cl)\s*[xX×]\s*\d+\b/gi, '')
       .replace(/\b\d+\s*(?:g|ml|l|cl)\b\s*-?\s*/gi, '')
       .replace(/\s+/g, ' ').trim();
 
-    // Full display name for review table
     const invoiceName = variant ? `${baseDisplay} | ${variant}` : baseDisplay;
+    const matchName   = variant ? `${baseDisplay} ${variant}` : baseDisplay;
+    const subtotal    = pricePerCase * shippedQty;
 
-    // Match string for fuzzy lookup: base + variant without pack noise
-    const matchName = variant ? `${baseDisplay} ${variant}` : baseDisplay;
-
-    const subtotal = pricePerCase * shippedQty;
-
-    items.push({
-      invoiceName,
-      baseDisplay,
-      variant,
-      packStr,
-      packSize,
-      pricePerCase,
-      orderedQty,
-      shippedQty,
-      totalUnits: shippedQty * packSize,
-      subtotal,
-      matchName,
-    });
+    items.push({ invoiceName, baseDisplay, variant, packStr, packSize,
+      pricePerCase, orderedQty, shippedQty, totalUnits: shippedQty * packSize,
+      subtotal, matchName });
   }
 
   return items;
 }
 
-// Render the review table
-function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
+// Handle one or more PDF files — parses all, combines into one review table
+async function handleInvoicePdfs(files) {
+  const validFiles = [...files].filter(f => f && f.type === 'application/pdf');
+  if (!validFiles.length) {
+    document.getElementById('deliveryStatus').style.color = '#e17055';
+    document.getElementById('deliveryStatus').textContent = 'Please select PDF files only.';
+    return;
+  }
+
+  document.getElementById('pdfUploadArea').style.display  = 'none';
+  document.getElementById('pdfParsing').style.display     = '';
+  document.getElementById('pdfParsing').textContent       = `⏳ Reading ${validFiles.length > 1 ? validFiles.length + ' invoices' : 'invoice'}…`;
+  document.getElementById('pdfReviewArea').style.display  = 'none';
+
+  try {
+    let allItems = [];
+    const invoiceMetas = [];
+
+    for (const file of validFiles) {
+      const text  = await parseInvoicePDF(file);
+      const items = extractInvoiceItems(text);
+      const date  = parseInvoiceDate(text);
+      const order = parseInvoiceOrderNo(text);
+
+      if (!items.length) {
+        console.debug(`[Invoice Parser] No items found in "${file.name}". Raw text:\n` + text);
+      }
+
+      // Tag each item with its source invoice date + order number
+      items.forEach(item => { item._invoiceDate = date; item._invoiceOrder = order; });
+      allItems = allItems.concat(items);
+      invoiceMetas.push({ date, order, count: items.length, name: file.name });
+    }
+
+    document.getElementById('pdfParsing').style.display    = 'none';
+    document.getElementById('pdfReviewArea').style.display = '';
+
+    if (!allItems.length) {
+      document.getElementById('pdfInvoiceMeta').innerHTML =
+        '<span style="color:#e17055">Could not extract line items from ' +
+        (validFiles.length > 1 ? 'any of the PDFs' : 'the PDF') +
+        '. Open browser console (F12 → Console) and share the debug output.</span>';
+      return;
+    }
+
+    renderPdfReviewTable(allItems, invoiceMetas);
+
+  } catch(e) {
+    document.getElementById('pdfParsing').style.display = 'none';
+    document.getElementById('pdfUploadArea').style.display = '';
+    document.getElementById('deliveryStatus').style.color = '#e17055';
+    document.getElementById('deliveryStatus').textContent = 'Failed to read PDF: ' + e.message;
+    console.error(e);
+  }
+}
+
+// Render the combined review table (items from one or more invoices)
+function renderPdfReviewTable(items, invoiceMetas) {
   const meta = document.getElementById('pdfInvoiceMeta');
-  meta.innerHTML = `Invoice ${orderNo ? '<strong>#' + orderNo + '</strong>' : ''}` +
-    ` · Date: <strong>${invoiceDateStr || 'unknown'}</strong>` +
-    ` · <strong>${items.length}</strong> line items`;
+  const multiInvoice = invoiceMetas.length > 1;
+
+  if (multiInvoice) {
+    meta.innerHTML = invoiceMetas.map(m =>
+      `<strong>${m.order ? 'Invoice #' + m.order : m.name}</strong> · ${m.date || 'date unknown'} · ${m.count} items`
+    ).join(' &nbsp;|&nbsp; ') + ` &nbsp;— <strong>${items.length} total</strong>`;
+  } else {
+    const m = invoiceMetas[0] || {};
+    meta.innerHTML = `${m.order ? 'Invoice <strong>#' + m.order + '</strong>' : ''} · Date: <strong>${m.date || 'unknown'}</strong> · <strong>${items.length}</strong> line items`;
+  }
 
   const cafeProducts = getCafeProducts();
   const optionsHtml = '<option value="">— skip —</option>' +
@@ -2373,25 +2435,24 @@ function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
 
   const tbody = document.getElementById('pdfReviewBody');
   tbody.innerHTML = '';
-
-  window._pdfInvoiceRows    = items.map(i => Object.assign({}, i));
-  window._pdfInvoiceDate    = invoiceDateStr;
-  window._pdfInvoiceOrderNo = orderNo;
+  window._pdfInvoiceRows = items.map(i => Object.assign({}, i));
 
   items.forEach((item, idx) => {
     const { product, score } = fuzzyMatchProduct(item.matchName);
-    const matchClass = score >= 0.75 ? 'match-good' : score >= 0.45 ? 'match-warn' : 'match-none';
-    const matchLabel = score >= 0.75 ? '✓' : score >= 0.45 ? '~' : '?';
+    const matchClass  = score >= 0.75 ? 'match-good' : score >= 0.45 ? 'match-warn' : 'match-none';
+    const matchLabel  = score >= 0.75 ? '✓' : score >= 0.45 ? '~' : '?';
     const selectedVal = score >= 0.45 && product ? product.product_name_raw : '';
+    const opts        = optionsHtml.replace(`value="${selectedVal}"`, `value="${selectedVal}" selected`);
 
-    const opts = optionsHtml.replace(
-      `value="${selectedVal}"`,
-      `value="${selectedVal}" selected`
-    );
+    // Show invoice source column only when multiple invoices uploaded
+    const invoiceCell = multiInvoice
+      ? `<td style="color:#4a4f66;font-size:10px;white-space:nowrap">${item._invoiceOrder ? '#' + item._invoiceOrder : '—'}</td>`
+      : '';
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td style="font-weight:600;max-width:220px">${item.invoiceName}</td>
+      ${invoiceCell}
+      <td style="font-weight:600;max-width:200px">${item.invoiceName}</td>
       <td style="color:#8b8fa3;white-space:nowrap">${item.packStr}</td>
       <td style="text-align:center">
         <input type="number" class="pdf-cases" data-idx="${idx}"
@@ -2412,7 +2473,6 @@ function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
     `;
     tbody.appendChild(tr);
 
-    // Live-update total units as user edits cases or pack size
     tr.querySelectorAll('.pdf-cases, .pdf-packsize').forEach(inp => {
       inp.addEventListener('input', () => {
         const c  = parseInt(tr.querySelector('.pdf-cases').value)    || 0;
@@ -2426,34 +2486,27 @@ function renderPdfReviewTable(items, invoiceDateStr, orderNo) {
   });
 }
 
-// Submit all PDF-parsed deliveries
+// Submit all PDF-parsed deliveries to Supabase
 async function submitPdfDeliveries() {
   const status    = document.getElementById('deliveryStatus');
   const submitBtn = document.getElementById('pdfSubmitBtn');
   const tbody     = document.getElementById('pdfReviewBody');
   const rows      = tbody.querySelectorAll('tr');
-  const date      = window._pdfInvoiceDate;
-  const orderNo   = window._pdfInvoiceOrderNo;
-  const noteBase  = orderNo ? `Invoice #${orderNo}` : 'PDF invoice';
-
-  if (!date) {
-    status.style.color = '#e17055';
-    status.textContent = 'Could not detect invoice date — please enter via manual entry.';
-    return;
-  }
 
   const deliveries = [];
   rows.forEach((tr, idx) => {
-    const product = tr.querySelector('.pdf-match-sel').value;
+    const product = tr.querySelector('.pdf-match-sel')?.value;
     if (!product) return;
-    const row        = window._pdfInvoiceRows[idx];
-    const totalUnits = row ? row.totalUnits : 0;
-    if (totalUnits < 1) return;
+    const row = window._pdfInvoiceRows[idx];
+    if (!row || row.totalUnits < 1) return;
+    const date     = row._invoiceDate;
+    const orderNo  = row._invoiceOrder;
+    if (!date) return; // can't log without a date
     deliveries.push({
       delivery_date:     date,
       product_name_raw:  product,
-      quantity_received: totalUnits,
-      notes:             noteBase,
+      quantity_received: row.totalUnits,
+      notes:             orderNo ? `Invoice #${orderNo}` : 'PDF invoice',
     });
   });
 
@@ -2464,7 +2517,7 @@ async function submitPdfDeliveries() {
   }
 
   status.style.color = '#8b8fa3';
-  status.textContent = `Saving ${deliveries.length} item${deliveries.length > 1 ? 's' : ''}...`;
+  status.textContent = `Saving ${deliveries.length} item${deliveries.length > 1 ? 's' : ''}…`;
   submitBtn.disabled = true;
 
   let saved = 0, failed = 0;
@@ -2479,51 +2532,9 @@ async function submitPdfDeliveries() {
     allDeliveries = null; // bust Order Prediction cache
   } else {
     status.style.color = '#fdcb6e';
-    status.textContent = `${saved} logged, ${failed} failed — check console.`;
+    status.textContent = `${saved} logged, ${failed} failed — see console.`;
   }
   submitBtn.disabled = false;
-}
-
-
-// Handle PDF file selection
-async function handleInvoicePdf(file) {
-  if (!file || file.type !== 'application/pdf') {
-    document.getElementById('deliveryStatus').style.color = '#e17055';
-    document.getElementById('deliveryStatus').textContent = 'Please select a PDF file.';
-    return;
-  }
-
-  document.getElementById('pdfUploadArea').style.display  = 'none';
-  document.getElementById('pdfParsing').style.display     = '';
-  document.getElementById('pdfReviewArea').style.display  = 'none';
-
-  try {
-    const text  = await parseInvoicePDF(file);
-    const items = extractInvoiceItems(text);
-    const date  = parseInvoiceDate(text);
-    const order = parseInvoiceOrderNo(text);
-
-    // Log extracted text to console for debugging if parse fails
-    if (!items.length) console.debug('[Invoice Parser] Raw extracted text:\n' + text);
-
-    document.getElementById('pdfParsing').style.display     = 'none';
-    document.getElementById('pdfReviewArea').style.display  = '';
-
-    if (!items.length) {
-      document.getElementById('pdfInvoiceMeta').innerHTML =
-        '<span style="color:#e17055">Could not extract line items. ' +
-        'Check the browser console (F12 → Console) and share the output so we can fix the parser.</span>';
-      return;
-    }
-
-    renderPdfReviewTable(items, date, order);
-  } catch(e) {
-    document.getElementById('pdfParsing').style.display = 'none';
-    document.getElementById('pdfUploadArea').style.display = '';
-    document.getElementById('deliveryStatus').style.color = '#e17055';
-    document.getElementById('deliveryStatus').textContent = 'Failed to read PDF: ' + e.message;
-    console.error(e);
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2667,12 +2678,10 @@ async function init() {
   pdfUploadArea.addEventListener('dragleave', () => pdfUploadArea.style.borderColor = '#3a3f55');
   pdfUploadArea.addEventListener('drop', e => {
     e.preventDefault(); pdfUploadArea.style.borderColor = '#3a3f55';
-    const f = e.dataTransfer.files[0];
-    if (f) handleInvoicePdf(f);
+    if (e.dataTransfer.files.length) handleInvoicePdfs(e.dataTransfer.files);
   });
   pdfFileInput.addEventListener('change', e => {
-    const f = e.target.files[0];
-    if (f) handleInvoicePdf(f);
+    if (e.target.files.length) handleInvoicePdfs(e.target.files);
     pdfFileInput.value = '';
   });
 }
