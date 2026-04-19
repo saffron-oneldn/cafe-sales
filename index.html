@@ -2272,6 +2272,10 @@ async function parseInvoicePDF(file) {
 function extractInvoiceItems(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const items = [];
+  const DBG = s => console.debug('[InvoiceParser]', s);
+
+  DBG(`total lines after split: ${lines.length}`);
+  lines.forEach((l, i) => DBG(`  L${i}: ${JSON.stringify(l)}`));
 
   // Trailing SKU: 5+ digit number OR ALLCAPS alphanum with dashes
   const SKU_RE  = /\s+(?:\d{5,}|[A-Z]{1,4}-[A-Z0-9-]+|[A-Z]{2,}[0-9]{3,})-?\s*$/;
@@ -2284,25 +2288,35 @@ function extractInvoiceItems(text) {
     const ordMatch = line.match(/Ordered:\s*(\d+)/i);
     if (!ordMatch) continue;
 
+    DBG(`L${i} has Ordered: → "${line}"`);
+
     const orderedQty = parseInt(ordMatch[1]);
     const ordIdx     = line.indexOf(ordMatch[0]);
     const beforeOrd  = line.slice(0, ordIdx).trim();
 
     // Skip header / footer rows
-    if (/^(Product\s*Name|SKU|Price|Qty|Subtotal|Grand\s*Total|Shipping|Tax|Order\s*#|Order\s*Date)/i.test(beforeOrd)) continue;
+    if (/^(Product\s*Name|SKU|Price|Qty|Subtotal|Grand\s*Total|Shipping|Tax|Order\s*#|Order\s*Date)/i.test(beforeOrd)) {
+      DBG(`  → SKIP (header/footer): beforeOrd="${beforeOrd}"`); continue;
+    }
 
     // Find price: last number of format X.XX in the text before "Ordered:"
     // Works regardless of whether £ is present
     const priceMatches = [...beforeOrd.matchAll(/[\d,]+\.[\d]{2}/g)];
-    if (!priceMatches.length) continue;
+    if (!priceMatches.length) {
+      DBG(`  → SKIP (no price): beforeOrd="${beforeOrd}"`); continue;
+    }
     const lastPriceStr = priceMatches[priceMatches.length - 1][0];
     const pricePerCase = parseFloat(lastPriceStr.replace(',', ''));
-    if (pricePerCase === 0) continue; // skip free / sample items
+    if (pricePerCase === 0) {
+      DBG(`  → SKIP (zero price)`); continue;
+    }
 
     // Product + SKU = everything before the price
     const pricePos   = beforeOrd.lastIndexOf(lastPriceStr);
     const productRaw = beforeOrd.slice(0, pricePos).replace(/[£\u00a3$]/g, '').trim();
-    if (!productRaw || productRaw.length < 4) continue;
+    if (!productRaw || productRaw.length < 4) {
+      DBG(`  → SKIP (product too short): productRaw="${productRaw}"`); continue;
+    }
 
     // Find Shipped: N — check same line first, then next 1-3 lines
     let shippedQty = null;
@@ -2310,13 +2324,16 @@ function extractInvoiceItems(text) {
     const sameLineSm = afterOrd.match(SHIP_RE);
     if (sameLineSm) {
       shippedQty = parseInt(sameLineSm[1]);
+      DBG(`  → Shipped (same line): ${shippedQty}`);
     } else {
       for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
         const sm = lines[j].match(SHIP_RE);
-        if (sm) { shippedQty = parseInt(sm[1]); break; }
+        if (sm) { shippedQty = parseInt(sm[1]); DBG(`  → Shipped (L${j}): ${shippedQty}`); break; }
       }
     }
-    if (!shippedQty || shippedQty < 1) continue;
+    if (!shippedQty || shippedQty < 1) {
+      DBG(`  → SKIP (no shippedQty): afterOrd="${afterOrd}", next lines: ${JSON.stringify(lines.slice(i+1, i+4))}`); continue;
+    }
 
     // Split on | — left = base product (with pack), right = variant + SKU
     const pipeIdx = productRaw.indexOf('|');
