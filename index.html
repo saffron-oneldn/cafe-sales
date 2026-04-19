@@ -2304,11 +2304,17 @@ function extractInvoiceItems(text) {
     const productRaw = beforeOrd.slice(0, pricePos).replace(/[£\u00a3$]/g, '').trim();
     if (!productRaw || productRaw.length < 4) continue;
 
-    // Find Shipped: N within next 1-3 lines
+    // Find Shipped: N — check same line first, then next 1-3 lines
     let shippedQty = null;
-    for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
-      const sm = lines[j].match(SHIP_RE);
-      if (sm) { shippedQty = parseInt(sm[1]); break; }
+    const afterOrd = line.slice(ordIdx + ordMatch[0].length);
+    const sameLineSm = afterOrd.match(SHIP_RE);
+    if (sameLineSm) {
+      shippedQty = parseInt(sameLineSm[1]);
+    } else {
+      for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+        const sm = lines[j].match(SHIP_RE);
+        if (sm) { shippedQty = parseInt(sm[1]); break; }
+      }
     }
     if (!shippedQty || shippedQty < 1) continue;
 
