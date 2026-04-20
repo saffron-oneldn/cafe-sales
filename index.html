@@ -1968,17 +1968,26 @@ async function renderOrderPrediction() {
   }
 
   // ── Build delivery map ──
-  // product_name_raw → { totalReceived, firstDelivDate, lastDelivDate }
+  // product_name_raw → { lastDelivQty, lastDelivDate, firstDelivDate }
+  // Uses last delivery as the cycle baseline: stock resets each order run.
   const delivMap = {};
   for (const d of deliveries) {
-    if (!delivMap[d.product_name_raw]) {
-      delivMap[d.product_name_raw] = { totalReceived: 0, firstDelivDate: null, lastDelivDate: null };
+    const existing = delivMap[d.product_name_raw];
+    if (!existing) {
+      delivMap[d.product_name_raw] = {
+        lastDelivQty: d.quantity_received,
+        lastDelivDate: d.delivery_date,
+        firstDelivDate: d.delivery_date,
+      };
+    } else {
+      if (d.delivery_date > existing.lastDelivDate) {
+        existing.lastDelivQty  = d.quantity_received;
+        existing.lastDelivDate = d.delivery_date;
+      }
+      if (d.delivery_date < existing.firstDelivDate) {
+        existing.firstDelivDate = d.delivery_date;
+      }
     }
-    delivMap[d.product_name_raw].totalReceived += d.quantity_received;
-    if (!delivMap[d.product_name_raw].firstDelivDate || d.delivery_date < delivMap[d.product_name_raw].firstDelivDate)
-      delivMap[d.product_name_raw].firstDelivDate = d.delivery_date;
-    if (!delivMap[d.product_name_raw].lastDelivDate || d.delivery_date > delivMap[d.product_name_raw].lastDelivDate)
-      delivMap[d.product_name_raw].lastDelivDate = d.delivery_date;
   }
 
   // ── Union of products: sold + delivered (cafe only) ──
@@ -2005,11 +2014,11 @@ async function renderOrderPrediction() {
     let estStock = null, lastDelivDate = null;
 
     if (dInfo) {
-      // Units sold since the first ever delivery date for this product
-      const soldSinceFirstDel = paid
-        .filter(r => r.productNameRaw === key && (r.date || '') >= dInfo.firstDelivDate)
+      // Units sold since the most recent delivery — bi-weekly cycle baseline
+      const soldSinceLastDel = paid
+        .filter(r => r.productNameRaw === key && r.date.slice(0, 10) >= dInfo.lastDelivDate)
         .reduce((s, r) => s + r.quantity, 0);
-      estStock = Math.max(0, dInfo.totalReceived - soldSinceFirstDel);
+      estStock = Math.max(0, dInfo.lastDelivQty - soldSinceLastDel);
       lastDelivDate = dInfo.lastDelivDate;
     }
 
@@ -2128,7 +2137,7 @@ async function renderOrderPrediction() {
     : 'all time';
   noteEl.innerHTML =
     `<strong>How this works:</strong> Velocity = avg units/week over the last ${velWeeksActual} weeks of data (from ${cutoffStr}). ` +
-    `Estimated stock = total units received − units sold since first delivery. ` +
+    `Estimated stock = units received in last delivery − units sold since that delivery. ` +
     `Predicted order = units needed to cover a <strong>2-week cycle</strong> at current velocity. ` +
     `Products with no delivery logged show velocity only — log a delivery to unlock stock estimates.`;
 }
