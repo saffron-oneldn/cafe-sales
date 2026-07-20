@@ -845,6 +845,7 @@
           <select id="cafeCatFilter">
             <option value="">All Cafe</option>
             <option>Coffee</option>
+            <option>Matcha</option>
             <option>Shakes</option>
             <option>Bars &amp; Snacks</option>
             <option>Functional Drinks</option>
@@ -1293,11 +1294,12 @@ async function sbPatchWhere(table, filterKey, filterVal, updates) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Category list per spec (Services replaces Other)
-const CATEGORIES = ['Coffee', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water', 'Merch', 'Services'];
-const CAFE_CATS  = ['Coffee', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water', 'Services'];
+const CATEGORIES = ['Coffee', 'Matcha', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water', 'Merch', 'Services'];
+const CAFE_CATS  = ['Coffee', 'Matcha', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water', 'Services'];
 
 const CAT_COLORS = {
   'Coffee':            '#f87171',
+  'Matcha':            '#9caf47',
   'Shakes':            '#e8c547',
   'Bars & Snacks':     '#e8c547',
   'Functional Drinks': '#4ade80',
@@ -1318,6 +1320,9 @@ const EXACT_CAT = {
   'Tea':'Coffee',
   'Boost':'Shakes','Brunch':'Shakes','Cinnamon Swirl':'Shakes',
   'Shake of the week':'Shakes',
+  // New ONE LDN house shakes (2026 menu)
+  'THE PB ONE':'Shakes','BERRY BURST':'Shakes','ALL IN ONE':'Shakes',
+  'GOOD TO GLOW':'Shakes','BIS-COFF BOOST':'Shakes','THE DAILY':'Shakes',
   'Grenade Bar':'Bars & Snacks',
   'Choco-Berry Cheesecake':'Shakes','PB&J':'Shakes','THE ONE PB':'Shakes',
   'Power (Lean)':'Shakes','Staff Shake':'Shakes',
@@ -1332,13 +1337,18 @@ const EXACT_CAT = {
 
 // Fallback prefix → category
 const PREFIX_CAT = [
+  ['Matcha',             'Matcha'],
+  ['Level Up',           'Shakes'],            // shake add-ons (2026 menu)
   ['Barebell Bars',      'Bars & Snacks'],
   ['Misfit Bar',         'Bars & Snacks'],
   ['UFit',               'Functional Drinks'],  // moved from Shakes per spec
   ['Nocco',              'Functional Drinks'],
   ['Tenzing',            'Functional Drinks'],
   ['Vitamin Well',       'Functional Drinks'],
+  ['Cadence Core 40 Fuel Bar','Bars & Snacks'],   // fuel bar (bought-in)
+  ['Cadence Core 500',   'Functional Drinks'],     // electrolyte sachets
   ['Cadence Electrolyte','Functional Drinks'],
+  ['Omnity',             'Functional Drinks'],      // electrolyte + creatine sachets
   ['HIRO',               'Functional Drinks'],
   ['Redbull',            'Functional Drinks'],
   ['Barebell Shake',     'Functional Drinks'],
@@ -1357,6 +1367,12 @@ const EXACT_PRICE = {
   'Iced Americano':4.35,'Dirty Chai - Small':4.10,'Dirty Chai - Large':4.10,
   'Tea':2.30,
   'Boost':6.00,'Brunch':6.80,'Cinnamon Swirl':6.80,
+  // New ONE LDN house shakes (2026 menu)
+  'THE PB ONE':6.90,'BERRY BURST':6.90,'ALL IN ONE':6.90,
+  'GOOD TO GLOW':6.90,'BIS-COFF BOOST':6.90,'THE DAILY':5.50,
+  // Level Up add-ons (2026 menu)
+  'Level Up - Protein Scoop':1.50,'Level Up - Creatine':0.70,
+  'Level Up - Collagen':0.90,'Level Up - PB/Biscoff':1.20,'Level Up - Fruit':1.20,
   'Choco-Berry Cheesecake':6.00,'PB&J':6.50,'THE ONE PB':6.50,
   'Power (Lean)':5.50,'Staff Shake':5.00,
   'Protein Powder - Whey':1.00,'Protein Powder - Vegan':1.00,
@@ -1370,8 +1386,10 @@ const EXACT_PRICE = {
 };
 
 const PREFIX_PRICE = [
+  ['Matcha',4.00],
   ['Barebell Bars',2.75],['Misfit Bar',2.75],['Grenade Bar',3.00],['UFit',3.00],
   ['Nocco',3.00],['Tenzing',2.25],['Vitamin Well',2.75],
+  ['Cadence Core 40 Fuel Bar',3.90],['Cadence Core 500',2.00],['Omnity',2.00],
   ['Cadence Electrolyte',3.00],
   ['Redbull - Editions',3.00],['Redbull',2.50],
   ['Barebell Shake',2.80],['HIRO',3.50],
@@ -1382,6 +1400,8 @@ const PREFIX_PRICE = [
 
 // Fallback brand derivation (used when product_name_raw not in product_lookup)
 const BRAND_PREFIXES = [
+  ['Matcha','ONE LDN'],['Level Up','ONE LDN'],
+  ['Cadence Core','Cadence'],['Omnity','Omnity'],
   ['Cadence Electrolyte','Cadence'],
   ['Nocco','Nocco'],['NOCCO','Nocco'],
   ['Barebell Bars','Barebell'],['Barebell Shake','Barebell'],['Barebell','Barebell'],
@@ -1411,14 +1431,14 @@ function getFallbackPrice(name) {
 
 function getFallbackBrand(name, category) {
   for (const [p, b] of BRAND_PREFIXES) { if (name.startsWith(p)) return b; }
-  // ONE LDN house products (coffee, shakes)
-  if (category === 'Coffee' || category === 'Shakes') return 'ONE LDN';
+  // ONE LDN house products (coffee, matcha, shakes)
+  if (category === 'Coffee' || category === 'Matcha' || category === 'Shakes') return 'ONE LDN';
   return category || 'Unknown';
 }
 
 // ── Order Prediction exclusions ──────────────────────────────────────────
 // Categories never tracked for stock ordering (made in-house or not restockable)
-const PRED_EXCLUDED_CATS = new Set(['Coffee', 'Services']);
+const PRED_EXCLUDED_CATS = new Set(['Coffee', 'Matcha', 'Services']);
 
 // Specific product_name_raw values excluded regardless of category
 // (own-brand shakes made in-house — Barebell Shake is bought-in so stays)
@@ -1429,6 +1449,10 @@ const PRED_EXCLUDED_PRODUCTS = new Set([
   'Shake Extras - Creatine','Shake Extras - Banana','Shake Extras - Berries',
   'Shake Extras - Nut Butter','Shake Extras - Oats',
   'Boost', // unbranded shake (lives under Shakes/Functional Drinks — excluded either way)
+  // New ONE LDN house shakes + Level Up add-ons (made in-house, not stock-ordered)
+  'THE PB ONE','BERRY BURST','ALL IN ONE','GOOD TO GLOW','BIS-COFF BOOST','THE DAILY',
+  'Level Up - Protein Scoop','Level Up - Creatine','Level Up - Collagen',
+  'Level Up - PB/Biscoff','Level Up - Fruit',
 ]);
 
 function isExcludedFromPred(key, cat) {
@@ -1460,7 +1484,7 @@ let weeklyDrillCat    = null;   // category drilled into (brand cards)
 let weeklyDrillBrand  = null;   // brand drilled into (product cards)
 let wrTableSeg        = 'all';  // product table only: 'all' | 'cafe' | 'merch'
 let wrTableSort       = 'units';// product table sort: 'units' | 'rev'
-const WR_CAFE_CATS    = ['Coffee', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water'];
+const WR_CAFE_CATS    = ['Coffee', 'Matcha', 'Shakes', 'Bars & Snacks', 'Functional Drinks', 'Water'];
 
 // Stock Reconciliation tab — count-to-count, anchored on stock-take dates
 let reconcileDate     = null;   // selected closing take_date (ISO)
