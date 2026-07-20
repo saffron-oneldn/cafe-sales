@@ -1345,7 +1345,10 @@ const PREFIX_CAT = [
   ['Nocco',              'Functional Drinks'],
   ['Tenzing',            'Functional Drinks'],
   ['Vitamin Well',       'Functional Drinks'],
+  ['Cadence Core 40 Fuel Bar','Bars & Snacks'],   // fuel bar (bought-in)
+  ['Cadence Core 500',   'Functional Drinks'],     // electrolyte sachets
   ['Cadence Electrolyte','Functional Drinks'],
+  ['Omnity',             'Functional Drinks'],      // electrolyte + creatine sachets
   ['HIRO',               'Functional Drinks'],
   ['Redbull',            'Functional Drinks'],
   ['Barebell Shake',     'Functional Drinks'],
@@ -1386,6 +1389,7 @@ const PREFIX_PRICE = [
   ['Matcha',4.00],
   ['Barebell Bars',2.75],['Misfit Bar',2.75],['Grenade Bar',3.00],['UFit',3.00],
   ['Nocco',3.00],['Tenzing',2.25],['Vitamin Well',2.75],
+  ['Cadence Core 40 Fuel Bar',3.90],['Cadence Core 500',2.00],['Omnity',2.00],
   ['Cadence Electrolyte',3.00],
   ['Redbull - Editions',3.00],['Redbull',2.50],
   ['Barebell Shake',2.80],['HIRO',3.50],
@@ -1397,6 +1401,7 @@ const PREFIX_PRICE = [
 // Fallback brand derivation (used when product_name_raw not in product_lookup)
 const BRAND_PREFIXES = [
   ['Matcha','ONE LDN'],['Level Up','ONE LDN'],
+  ['Cadence Core','Cadence'],['Omnity','Omnity'],
   ['Cadence Electrolyte','Cadence'],
   ['Nocco','Nocco'],['NOCCO','Nocco'],
   ['Barebell Bars','Barebell'],['Barebell Shake','Barebell'],['Barebell','Barebell'],
