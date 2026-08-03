@@ -1232,6 +1232,23 @@ async function sbGet(table, params = '') {
   return res.json();
 }
 
+// Exact row count via PostgREST's Content-Range header. Range 0-0 keeps the
+// body to a single row — we only want the total after the slash.
+// Returns null rather than throwing: this only powers a status line, so a
+// blocked or unexposed Content-Range header must not fail an upload.
+async function sbCount(table, params = 'select=id') {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+      headers: { ...SB_HEADERS, 'Prefer': 'count=exact', 'Range': '0-0' },
+    });
+    if (!res.ok) return null;
+    const total = parseInt((res.headers.get('content-range') || '').split('/')[1], 10);
+    return Number.isFinite(total) ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 async function sbUpsert(table, rows, onConflict, resolution = 'ignore-duplicates') {
   const url = `${SUPABASE_URL}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
   const res = await fetch(url, {
@@ -1874,27 +1891,42 @@ async function handleFiles(files) {
     return;
   }
 
-  // Upsert to Supabase — conflict on (order_no, order_line) = ignore duplicates
+  // Upsert to Supabase — conflict on (order_no, order_line) overwrites the
+  // stored row. Re-uploading a CSV is the way to correct data already in the
+  // database, so a matching order line must take the CSV's values rather than
+  // being skipped.
   setStatus('', 'Uploading to database…');
-  let inserted = 0;
-  let skipped  = 0;
+  let written = 0;
+  let added   = null;   // null = breakdown unavailable, report the total instead
+  let updated = null;
   try {
+    // Count first so we can tell new rows from corrected ones — PostgREST
+    // reports how many rows were written, but not which of those were inserts.
+    const countBefore = await sbCount('shop_sales');
+
     // Batch in chunks of 500 — stays well inside PostgREST payload limits
     const CHUNK = 500;
     for (let i = 0; i < allDbRows.length; i += CHUNK) {
       const chunk  = allDbRows.slice(i, i + CHUNK);
-      const result = await sbUpsert('shop_sales', chunk, 'order_no,order_line');
-      inserted += Array.isArray(result) ? result.length : 0;
+      const result = await sbUpsert('shop_sales', chunk, 'order_no,order_line', 'merge-duplicates');
+      written += Array.isArray(result) ? result.length : 0;
     }
-    skipped = allDbRows.length - inserted;
+
+    const countAfter = await sbCount('shop_sales');
+    if (countBefore !== null && countAfter !== null) {
+      added   = Math.max(0, countAfter - countBefore);
+      updated = Math.max(0, written - added);
+    }
 
     // Log the upload
     const datesSorted = allDbRows.map(r => r.date).sort();
     for (const file of fileArr) {
       await sbInsert('shop_upload_log', {
         filename:         file.name,
-        rows_inserted:    inserted,
-        rows_skipped:     skipped,
+        // Nothing is skipped now that conflicts overwrite; rows_skipped stays
+        // 0 rather than being repurposed to mean "updated".
+        rows_inserted:    added ?? written,
+        rows_skipped:     0,
         date_range_start: datesSorted[0]?.slice(0, 10) || null,
         date_range_end:   datesSorted[datesSorted.length - 1]?.slice(0, 10) || null,
       });
@@ -1920,9 +1952,12 @@ async function handleFiles(files) {
     `✓ ${allRecords.length.toLocaleString()} line items · ${getWeekKeys(getPaidFiltered()).length} weeks`;
   document.getElementById('clearBtn').style.display = '';
 
+  const writeSummary = (added === null)
+    ? `${written} rows synced`
+    : `${added} new · ${updated} updated`;
   setStatus('ok', errors.length
-    ? `${inserted} new rows · ${errors.length} file(s) failed`
-    : `${inserted} new · ${skipped} already existed`
+    ? `${writeSummary} · ${errors.length} file(s) failed`
+    : writeSummary
   );
 
   if (periodMode === 'month') populateMonthPills();
