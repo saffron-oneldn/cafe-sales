@@ -1512,8 +1512,23 @@ function getMondayOf(date) {
   return d;
 }
 
+// Format a Date as YYYY-MM-DD from its LOCAL calendar parts.
+// toISOString() converts to UTC first, which rolls the date back a day for any
+// timezone ahead of UTC (London in BST) — parseDDMMYYYY and getMondayOf both
+// build local-midnight dates, so 27/07 midnight BST is 26/07 23:00 UTC.
 function isoDate(date) {
-  return date.toISOString().slice(0, 10);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Parse a YYYY-MM-DD string as local midnight. `new Date(iso)` would read it as
+// UTC midnight, reintroducing the same offset when the result is formatted back.
+function parseISODate(iso) {
+  const [y, m, d] = (iso || '').split('-').map(Number);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
+  return new Date(y, m - 1, d);
 }
 
 function fmtWeek(isoStr) {
@@ -1781,8 +1796,8 @@ async function loadFromSupabase() {
     const dates = allData.map(r => (r.date || '').slice(0, 10)).filter(Boolean).sort();
     if (dates.length > 10) {
       const p90 = dates[Math.floor(dates.length * 0.9)];
-      const cutoff = new Date(p90); cutoff.setDate(cutoff.getDate() - 90);
-      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      const cutoff = parseISODate(p90); cutoff.setDate(cutoff.getDate() - 90);
+      const cutoffStr = isoDate(cutoff);
       allData = allData.filter(r => !r.date || r.date.slice(0, 10) >= cutoffStr);
     }
     allRecords = allData.map(enrichRecord);
@@ -3750,7 +3765,7 @@ function wrInSeg(r) {
        : weeklySegment === 'merch' ? r.category === 'Merch'
        : true; // 'all' — consumables/services already excluded upstream
 }
-function wrWeekEnd(iso) { const d = new Date(iso); d.setDate(d.getDate() + 6); return isoDate(d); }
+function wrWeekEnd(iso) { const d = parseISODate(iso); d.setDate(d.getDate() + 6); return isoDate(d); }
 function wrWeekLabel(iso) { return `${fmtWeek(iso)} – ${fmtWeek(wrWeekEnd(iso))}`; }
 // Previous week + ~same week last month, relative to the selected week.
 function wrAdjacentWeeks() {
