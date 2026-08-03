@@ -31,7 +31,7 @@ gotchas, and the precise next action.
 
 Rolling Log + Git Push. Always. The log file is `logs/shop-sales_log.md` (repo-relative),
 newest entry at top, committed on the session's working branch. Do not write logs
-anywhere else — not `~/Documents`, not a scratch directory, not a new file.
+anywhere else.
 
 ## Process
 
