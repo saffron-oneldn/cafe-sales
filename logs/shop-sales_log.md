@@ -4,11 +4,11 @@ Rolling log of Claude sessions on the Shop Sales project. Newest entry at the to
 
 ---
 
-# Fix CSV upload RLS error: missing anon UPDATE policy on shop_sales
+# Fix CSV upload errors: missing anon UPDATE policy + duplicate conflict targets
 **Date:** 2026-08-14
 **Project:** Shop Sales — Supabase RLS / CSV upload pipeline
 **Mode:** Rolling Log + Git Push
-**Status:** Complete
+**Status:** Complete (two sequential bugs found and fixed in one session — see below)
 
 ---
 
@@ -75,19 +75,47 @@ label for the same failing POST request (Chrome renders failed-resource lines as
 `SUPABASE_ANON` key issue was found; the anon key in index.html:1220 is valid (role
 `anon`, far-future `exp`).
 
-No application code changes were needed — this was purely a database-side RLS gap, not
-a bug in `index.html`'s upload logic.
+That first fix alone did **not** fully resolve the user's problem — see the second bug
+below, found when the user retried the upload after PR #49 was opened.
+
+### Bug 2 (found on retry): duplicate conflict targets within one upload batch
+After the RLS fix, the user retried the upload and got a *different* error:
+Postgres `21000` — `"ON CONFLICT DO UPDATE command cannot affect row a second time"`,
+with hint `"Ensure that no rows proposed for insertion within the same command have
+duplicate constrained values."` — again from `sbUpsert` (index.html:1261) via
+`handleFiles` (index.html:1911).
+
+This is a Postgres limitation, not an RLS/permissions issue: a single
+`INSERT ... ON CONFLICT (order_no, order_line) DO UPDATE` statement cannot target the
+same `(order_no, order_line)` row twice — if two rows in the *same* upsert batch share
+a key, Postgres errors instead of silently overwriting. Reading `handleFiles` /
+`processRows` (index.html:1839, 1697): `order_line` is assigned as `idx + 1` per item
+within each CSV row's `Items` field, scoped to that one row. If the same `order_no`
+appears more than once across the file(s) selected in one upload — e.g. two CSV
+exports with overlapping date ranges uploaded together, or a duplicate row within a
+single export — `processRows` (called once per file, concatenated into `allDbRows`)
+produces two or more rows with an identical `(order_no, order_line)` pair, and whichever
+chunk of 500 they land in throws this error.
+
+**Fix:** in `handleFiles`, after all files are parsed and concatenated into
+`allDbRows` but before chunking/upserting, dedupe by `` `${order_no}::${order_line}` ``
+using a `Map` (last occurrence wins — consistent with "re-upload corrects existing
+data"). This guarantees no chunk sent to Postgres can ever contain a duplicate
+conflict target, regardless of how many files or how much date-range overlap the user
+selects in one go.
 
 ## Artifacts Produced / Modified
 
 | File | What it is | Status | Location |
 |------|------------|--------|----------|
 | (Supabase migration `anon_update_shop_sales`) | RLS policy adding anon UPDATE on `shop_sales` | Created (DB-side, not in repo) | Supabase project `ljjwssicvvyyueyznmou` |
-| logs/shop-sales_log.md | Rolling session log | Modified (this entry prepended) | /logs/shop-sales_log.md |
+| index.html | Dedupe `allDbRows` by `(order_no, order_line)` before upserting, in `handleFiles` | Modified | /index.html (`handleFiles`, ~line 1894) |
+| logs/shop-sales_log.md | Rolling session log | Modified (this entry prepended, then amended in-session as bug 2 was found) | /logs/shop-sales_log.md |
 
-No `index.html` or other repo files were changed — the repo's migrations aren't
-tracked as files in this repo (none exist under version control; they're managed
-directly against the Supabase project via MCP/dashboard).
+Migrations for this repo's Supabase project aren't tracked as files in the repo (none
+exist under version control; they're managed directly against the project via
+MCP/dashboard) — only the RLS policy addition above is DB-side; the dedupe fix is a
+normal code change committed to this branch.
 
 ## Decisions & Reasoning
 - **Fixed via a direct Supabase RLS policy addition rather than an app-code workaround**:
@@ -99,19 +127,33 @@ directly against the Supabase project via MCP/dashboard).
   both are existing, working precedents for anon-writable UPDATE on this schema's
   tables, so matching their `USING (true) WITH CHECK (true)` shape keeps RLS policy
   style consistent across the shop schema rather than inventing new semantics.
+- **Deduped client-side (in `handleFiles`) rather than changing the upsert to
+  per-row requests or a different conflict strategy**: batching stays intact (still one
+  request per 500-row chunk), the fix is a single `Map` pass with no behavior change
+  for the common case (no duplicate keys), and "last occurrence wins" matches the
+  existing "re-upload corrects data" intent rather than introducing new semantics
+  (e.g. silently dropping the duplicate instead would be surprising/inconsistent with
+  that intent).
 
 ## Current State (end of session)
-Fix is live in the Supabase project (not gated behind a deploy or PR — RLS policies
-take effect immediately). CSV re-uploads that overlap existing `(order_no, order_line)`
-rows should now upsert cleanly instead of throwing 42501. Not yet manually re-tested
+Both fixes are live: the RLS policy is applied directly to the Supabase project
+(commit `0142317`, PR #49), and the dedupe fix is committed and pushed to
+`claude/sales-csv-upload-error-y12v26` (commit `a114d87`, added to the same PR #49).
+The favicon 404 visible in the second screenshot is unrelated cosmetic noise (no
+`favicon.ico` file in the repo) and not part of this fix. Not yet manually re-tested
 against a live CSV upload in a browser (no browser/UI access in this session) — see
 Next Steps.
 
 ## Next Steps
-1. Re-upload the CSV that originally triggered the error (or any CSV overlapping
-   previously-uploaded order lines) through the app's UI and confirm no console errors
-   and that `rows updated` reflects correctly.
-2. If any other repo/task ever needs to track Supabase migrations as files, consider
+1. Re-upload the CSV(s) that triggered the errors through the app's UI and confirm no
+   console errors and that `rows updated` reflects correctly. Pay particular attention
+   to any upload involving multiple files or overlapping date ranges, since that's the
+   scenario that produced bug 2.
+2. If uploads are still failing after this, get the exact console error again —
+   don't assume it's a variant of either bug above without seeing the new message,
+   since the error code (42501 vs 21000 vs something else) determines whether it's an
+   RLS/permissions issue or an application-logic issue.
+3. If any other repo/task ever needs to track Supabase migrations as files, consider
    adding a `supabase/migrations/` directory to this repo so schema/RLS changes are
    code-reviewable — currently they exist only inside the Supabase project itself.
 
@@ -122,7 +164,9 @@ N/A — root cause identified and fixed.
 - Supabase project: `ljjwssicvvyyueyznmou` ("PT Dashboard", org `ohwlndcukzphjbtjjpin`).
 - Table affected: `public.shop_sales` (RLS enabled).
 - New policy: `anon_update_shop_sales` (UPDATE, role `anon`, `USING (true) WITH CHECK (true)`).
-- Branch: `claude/sales-csv-upload-error-y12v26`.
+- Branch: `claude/sales-csv-upload-error-y12v26`; PR: `ONE-LDN/shop-sales#49` (draft).
+- Commits this session: `0142317` (session log / RLS fix note), `a114d87` (dedupe fix
+  in `index.html`).
 
 ## Notes & Gotchas
 - PostgREST's upsert-via-`on_conflict` needs **both** INSERT and UPDATE RLS policies
@@ -131,6 +175,14 @@ N/A — root cause identified and fixed.
   with an existing key. Any future table that adds `merge-duplicates`/upsert behavior
   should get this checked as part of that change, not discovered later via a user
   bug report.
+- Separately, `ON CONFLICT DO UPDATE` in Postgres cannot touch the same conflict-target
+  row twice within one statement (error `21000`) — this is unrelated to RLS and will
+  happen even with correct policies if the *client* sends two rows with the same
+  conflict key in one batch. Any code building batched upsert payloads from
+  concatenated/multi-source input (multiple files, multiple pages, etc.) needs to
+  dedupe by the conflict key before sending, not rely on the DB to reconcile it.
+- These are genuinely two independent bugs that happened to surface back-to-back on
+  the same upload flow — don't assume fixing one implies the other is also fixed.
 - This repo has no in-repo migration files — all schema/RLS state lives only in the
   Supabase project. Anyone auditing schema history needs Supabase MCP/dashboard
   access, not `git log`.
