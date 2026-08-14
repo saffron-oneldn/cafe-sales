@@ -1891,6 +1891,15 @@ async function handleFiles(files) {
     return;
   }
 
+  // Dedupe within this upload by (order_no, order_line): a single Postgres
+  // upsert statement can't ON CONFLICT DO UPDATE the same target row twice
+  // (errors with 21000), which happens when the same order appears more than
+  // once across the selected file(s) — e.g. overlapping date-range exports.
+  // Last occurrence wins, matching "re-upload corrects existing rows".
+  const dedupedRows = new Map();
+  for (const row of allDbRows) dedupedRows.set(`${row.order_no}::${row.order_line}`, row);
+  allDbRows = Array.from(dedupedRows.values());
+
   // Upsert to Supabase — conflict on (order_no, order_line) overwrites the
   // stored row. Re-uploading a CSV is the way to correct data already in the
   // database, so a matching order line must take the CSV's values rather than
